@@ -165,7 +165,7 @@ def _occurrence_html(item, group, group_explanation, group_remediation):
     if group != GROUP_PASS and identity:
         lines.append(
             '<label class="pick"><input type="checkbox" class="finding-select" '
-            'value="{}" data-group="{}"> בחירה לתיקון: <code dir="ltr">{}</code></label>'.format(
+            'value="{}" data-group="{}"> כללו בבקשה לסוכן: <code dir="ltr">{}</code></label>'.format(
                 _esc(identity), _esc(group), _esc(item.get("id") or identity)))
     else:
         lines.append('<p class="pick"><code dir="ltr">{}</code></p>'.format(
@@ -216,10 +216,10 @@ def _rule_card_html(rule_key, items, group):
         lines.append('<p class="prose" lang="en" dir="ltr">{}</p>'.format(_esc(explanation)))
     if remediation:
         lines.append('<p class="prose" lang="en" dir="ltr">{}</p>'.format(_esc(remediation)))
-    lines.append('</details><ol class="occurrences">')
+    lines.append('</details><details class="occurrence-details"><summary>בחירת מופעים ומיקומים ({})</summary><ol class="occurrences">'.format(len(items)))
     for item in items:
         lines.append(_occurrence_html(item, group, explanation, remediation))
-    lines.append("</ol></article>")
+    lines.append("</ol></details></article>")
     return "\n".join(lines)
 
 
@@ -345,17 +345,22 @@ def _comparison_html(report):
 
 def _toolbar_html():
     return """<section aria-labelledby="actions-h">
-<h2 id="actions-h">בחירה ויצוא לתיקון</h2>
-<p>כתובת אתר מאפשרת בדיקה והכנת בקשת תיקון. כדי לשנות את האתר בפועל, הסוכן צריך גישה לתיקיית הקוד או למערכת האתר.</p>
-<p class="section-note">סמנו ממצאים ברשימות שלמטה, ולאחר מכן העתיקו או הורידו חבילת תיקון
-(Markdown) המיועדת לסוכן או למפתח המתקן. רק הממצאים שסומנו ייכללו בחבילה.</p>
+<h2 id="actions-h">מה עושים עכשיו?</h2>
+<ol class="next-steps">
+<li><strong>בוחרים נושא לבדיקה או לתיקון</strong><span>פתחו את המופעים בכרטיס המתאים וסמנו מה לכלול. חשד נשלח לאימות לפני שינוי.</span></li>
+<li><strong>מעבירים לסוכן שלכם</strong><span>העתיקו את הבקשה לשיחה ב־Codex או Claude Code, או צרפו את הקובץ שהורדתם.</span></li>
+<li><strong>מקבלים תיקון ובדיקה חוזרת</strong><span>פתחו את פרויקט האתר אצל הסוכן ובקשו: ״טפל רק בממצאים שבחבילה, אמת לפני שינוי ובדוק שוב אחריו. אל תפרוס את האתר.״</span></li>
+</ol>
+<p class="handoff-note"><strong>הלחיצה מכינה הוראות בלבד.</strong> היא לא מפעילה סוכן, לא משנה קוד ולא שולחת מידע. תיקון בפועל מתחיל אצל הסוכן עם גישה לפרויקט ובקשה שלכם.</p>
 <div class="toolbar" role="group" aria-label="פעולות על הממצאים שנבחרו">
 <button type="button" id="select-verified">בחירת כל הליקויים המאומתים</button>
-<button type="button" id="copy-selected">העתקת חבילת תיקון ללוח</button>
-<button type="button" id="download-selected">הורדת חבילת תיקון (Markdown)</button>
+<button type="button" id="copy-selected">העתקת בקשה ל־Codex / Claude</button>
+<button type="button" id="download-selected">הורדת קובץ לצירוף לסוכן</button>
+<button type="button" id="clear-selected">ניקוי הבחירה</button>
 <span id="selected-count">נבחרו 0 ממצאים</span>
 </div>
 <p id="packet-status" role="status"></p>
+<p id="packet-next" class="handoff-note" hidden>השלב הבא: פתחו את פרויקט האתר אצל סוכן הקוד, הדביקו את הבקשה או צרפו את repair-packet.md ובקשו לבצע את ההוראות. אפשר להעביר את הקובץ גם למי שמתחזק את האתר. כתובת אתר לבדה אינה מאפשרת לערוך אותו.</p>
 <div id="packet-fallback" hidden>
 <label for="packet-text">חבילת התיקון (Markdown) — אם ההעתקה האוטומטית נכשלה, העתיקו מכאן ידנית:</label>
 <textarea id="packet-text" rows="12" readonly spellcheck="false" dir="auto"></textarea>
@@ -424,7 +429,24 @@ button:hover { background: #1e40af; border-color: #1e40af; }
 details > summary { cursor: pointer; font-weight: 600; padding: 0.25rem; }
 :focus { outline: 3px solid #1d4ed8; outline-offset: 2px; }
 footer.page { color: #444444; }
+.next-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; padding-inline-start: 1.5rem; }
+.next-steps li { padding-inline: .3rem; }
+.next-steps span { display: block; color: #475569; font-size: .95rem; margin-block-start: .5rem; }
+.handoff-note { background: #eff6ff; border-inline-start: 3px solid #1d4ed8; border-radius: .4rem; padding: .8rem 1rem; }
+header.page { background: #101f38; color: #fff; border: none; border-radius: 0 0 1.5rem 1.5rem; padding: 2rem; }
+header.page .meta, header.page .section-note { color: #e2e8f0; }
+header.page .eyebrow { color: #c7d2fe; font-size: .8rem; letter-spacing: .15em; margin: 0 0 .8rem; }
+header.page details { margin-block-start: 1rem; }
+header.page h1 { font-size: clamp(1.45rem, 4vw, 2.2rem); }
+main > section { border-radius: 1rem; padding: 1.5rem; }
+.rule { border-radius: .7rem; }
+.occurrence-details { margin-block-start: .75rem; }
+#select-verified, #download-selected, #clear-selected { background: #fff; color: #1d4ed8; }
+#select-verified:hover, #download-selected:hover, #clear-selected:hover { background: #eff6ff; }
+#packet-next[hidden] { display: none; }
+@media print { .toolbar, #packet-fallback, #packet-status { display: none; } }
 @media (max-width: 40rem) {
+  .next-steps { grid-template-columns: 1fr; }
   .toolbar { flex-direction: column; align-items: stretch; }
   header.page h1 { font-size: 1.3rem; }
 }
@@ -442,6 +464,7 @@ _UI_SCRIPT = """
   var countEl = document.getElementById('selected-count');
   var fallbackEl = document.getElementById('packet-fallback');
   var textareaEl = document.getElementById('packet-text');
+  var selectionRevision = 0;
 
   try {
     window.auditReport = JSON.parse(document.getElementById('audit-report-data').textContent);
@@ -464,7 +487,13 @@ _UI_SCRIPT = """
   }
 
   function updateCount() {
+    selectionRevision += 1;
     countEl.textContent = 'נבחרו ' + selectedIds().length + ' ממצאים';
+    // A changed selection invalidates the previously displayed packet.
+    fallbackEl.hidden = true;
+    textareaEl.value = '';
+    document.getElementById('packet-next').hidden = true;
+    announce('', false);
   }
 
   function buildPacket() {
@@ -511,11 +540,16 @@ _UI_SCRIPT = """
   document.getElementById('copy-selected').addEventListener('click', function () {
     var packet = buildPacket();
     if (!packet) { return; }
+    var copyRevision = selectionRevision;
     var done = function () {
-      announce('חבילת תיקון עבור ' + packet.ids.length + ' ממצאים הועתקה ללוח.', false);
+      if (copyRevision !== selectionRevision) { return; }
+      announce('הבקשה עבור ' + packet.ids.length + ' ממצאים הועתקה. כעת הדביקו אותה בשיחה עם הסוכן.', false);
+      document.getElementById('packet-next').hidden = false;
     };
     var failed = function () {
+      if (copyRevision !== selectionRevision) { return; }
       showFallback(packet.text, 'ההעתקה האוטומטית נכשלה. העתיקו ידנית מתיבת הטקסט שלמטה.');
+      document.getElementById('packet-next').hidden = false;
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(packet.text).then(done, failed);
@@ -536,7 +570,14 @@ _UI_SCRIPT = """
     link.click();
     link.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-    announce('קובץ Markdown עם ' + packet.ids.length + ' ממצאים ירד למחשב.', false);
+    announce('נשלחה בקשת הורדה של repair-packet.md עם ' + packet.ids.length + ' ממצאים. צרפו אותו לשיחה עם הסוכן.', false);
+    document.getElementById('packet-next').hidden = false;
+  });
+
+  document.getElementById('clear-selected').addEventListener('click', function () {
+    document.querySelectorAll('input.finding-select').forEach(function (box) { box.checked = false; });
+    updateCount();
+    announce('הבחירה נוקתה. לא בוצע שינוי באתר.', false);
   });
 
   document.addEventListener('change', function (event) {
@@ -597,7 +638,7 @@ def render_html(report):
             groups[GROUP_VERIFIED], GROUP_VERIFIED,
             "לא נמצאו ליקויים מאומתים. היעדר ממצאים אינו מעיד על עמידה בתקן."),
         _group_section_html(
-            "heuristic", "אזהרות היוריסטיות",
+            "heuristic", "חשדות שצריך לאמת",
             "חשדות שדורשים אימות בדף המעובד לפני תיקון; אל תתקנו בעיניים עצומות.",
             groups[GROUP_HEURISTIC], GROUP_HEURISTIC,
             "לא נרשמו אזהרות היוריסטיות."),
@@ -624,8 +665,10 @@ def render_html(report):
 </head>
 <body>
 <header class="page">
+<p class="eyebrow" dir="ltr">NEXT IMPACT / ACCESSIBILITY</p>
 <h1>{title}</h1>
-{run_meta}
+<p>מבינים מה נמצא. בוחרים במה לטפל. ממשיכים עם הסוכן שלכם.</p>
+<details><summary>פרטי הסריקה והכיסוי</summary>{run_meta}</details>
 </header>
 <main>
 {sections}
@@ -655,5 +698,4 @@ def render_html(report):
         repair_pack=_repair_pack_js(),
         ui_script=_UI_SCRIPT,
     )
-
 

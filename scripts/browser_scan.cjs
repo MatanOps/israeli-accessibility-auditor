@@ -14,7 +14,7 @@ const MAX_TIMEOUT_MS = 120000;
 const TRANSIENT_HTTP = new Set([429, 502, 503, 504]);
 // Reserve for post-navigation work (readiness, axe, extraction, teardown).
 const POST_NAV_RESERVE_MS = 7000;
-const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
+const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'];
 
 const state = {
   emitted: false,
