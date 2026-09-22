@@ -1,4 +1,4 @@
-name: Two-site accessibility comparison
+name: Matched-viewport accessibility comparison
 on:
   push:
     branches: [codex/two-site-accessibility-benchmark]
@@ -7,146 +7,59 @@ permissions:
 jobs:
   compare:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Prepare pinned dependencies
+      - name: Prepare pinned engines
         run: |
-          python -m pip install -r requirements.txt
           npm ci --ignore-scripts --no-audit --no-fund
           npx --no-install playwright install --with-deps chromium
-      - name: Compare released CLI, raw engine and original scanners
+          npx -y @accesslint/cli@0.13.0 --version
+      - name: Compare engines on the same open page and viewport
         run: |
-          python - <<'PY'
-          import collections, contextlib, importlib.util, io, json, pathlib, subprocess, sys, urllib.request
-          root=pathlib.Path.cwd()
-          out=root/'benchmark-reports'
-          out.mkdir(exist_ok=True)
-          sys.path.insert(0,str(root/'scripts'))
-          import audit
-          def run(args,timeout=100):
-           p=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
-           return p
-          sources=[
-          ('claude-original.py','https://raw.githubusercontent.com/alirezarezvani/claude-skills/19392f7a08264ed00486a251f5b2098321771f94/engineering-team/a11y-audit/skills/a11y-audit/scripts/a11y_scanner.py'),
-          ('israeli-original.py','https://raw.githubusercontent.com/skills-il/localization/9ec3b05fd9a551f123c3a5fb7abcc208b85a10e5/israeli-accessibility-compliance/scripts/audit_a11y.py')]
-          for name,url in sources:
-           (out/name).write_bytes(urllib.request.urlopen(url,timeout=30).read())
-          all_results=[]
-          for name,url in [('nextimpact','https://nextimpact.co.il'),('refeel','https://refeel.co.il')]:
-           item={'name':name,'url':url}
-           cli=run([sys.executable,'scripts/audit.py','--url',url,'--timeout','60','--output',str(out/name)])
-           item['cli_exit']=cli.returncode
-           rp=out/name/'accessibility-report.json'
-           if rp.exists():
-            report=json.loads(rp.read_text())
-            item['cli']={'summary':report['summary'],'run':report['metadata']['run'],'errors':report['errors'],
-              'groups':[{'rule':rid,'status':status,'count':len(fs),'examples':[{'evidence':f['evidence'],'location':f['location'],'explanation':f['explanation']} for f in fs[:2]]} for (rid,status),fs in
-                __import__('itertools').groupby([],lambda x:x)]}
-            groups={}
-            for f in report['findings']:
-             if f['status']=='pass':continue
-             groups.setdefault((f.get('rule_id',f['id']),f['status']),[]).append(f)
-            item['cli']['groups']=[{'rule':rid,'status':status,'count':len(fs),'examples':[{'evidence':f.get('evidence'),'location':f.get('location'),'explanation':f.get('explanation')} for f in fs[:2]]} for (rid,status),fs in groups.items()]
-           else:item['cli_error']=cli.stderr[-1000:]
-           try:
-            raw=audit.rendered_scan(url,60,[])
-            (out/(name+'-adapter-raw.json')).write_text(json.dumps(raw,ensure_ascii=False))
-            mapped=audit.axe_findings(raw['axe'],raw['run'].get('final_url') or url)
-            item['mapping']={'ok':raw['ok'],'status':raw['run']['status'],'errors':raw['errors'],
-               'violations_raw':sum(len(r['nodes']) for r in raw['axe']['violations']),
-               'violations_mapped':sum(f['status']=='fail' for f in mapped),
-               'incomplete_raw':sum(len(r['nodes']) for r in raw['axe']['incomplete']),
-               'incomplete_mapped':sum(f['status']=='human-review-required' for f in mapped)}
-            (out/(name+'-rendered.html')).write_text(raw['html'])
-            original=run([sys.executable,str(out/'claude-original.py'),str(out/(name+'-rendered.html')),'--json'])
-            (out/(name+'-claude-rendered.json')).write_text(original.stdout)
-            parsed=json.loads(original.stdout)
-            item['claude_rendered']={'summary':parsed['summary'],'by_rule':dict(collections.Counter(f['rule_id'] for f in parsed['findings']))}
-           except Exception as e:item['adapter_or_original_error']=str(e)
-           original=run([sys.executable,str(out/'israeli-original.py'),'--url',url,'--output',str(out/(name+'-israeli-original.json'))])
-           (out/(name+'-israeli-original.txt')).write_text(original.stdout+original.stderr)
-           if (out/(name+'-israeli-original.json')).exists():
-            item['israeli_original']=json.loads((out/(name+'-israeli-original.json')).read_text())
-           else:item['israeli_original_error']=original.stderr[-1000:]
-           all_results.append(item)
-           print('BENCHMARK_SITE '+json.dumps(item,ensure_ascii=False),flush=True)
-          (out/'comparison-summary.json').write_text(json.dumps(all_results,ensure_ascii=False,indent=2))
-          
-          PY
-      - name: Compare independent axe defaults, matched WCAG tags and mobile
-        run: |
-          cat > benchmark-probe.cjs <<'JS'
-          const fs = require('fs');
-          const {chromium} = require('playwright');
-          const axePath = require.resolve('axe-core/axe.min.js');
-          const tags = ['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22a','wcag22aa'];
+          cat > paired-probe.cjs <<'JS'
+          const fs=require('fs'), cp=require('child_process'), {promisify}=require('util');
+          const execFile=promisify(cp.execFile);
+          const {chromium}=require('playwright');
+          const tags=['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22a','wcag22aa'];
           (async()=>{
-           const browser=await chromium.launch({headless:true});
-           const output=[];
-           for(const [name,url] of [['nextimpact','https://nextimpact.co.il'],['refeel','https://refeel.co.il']]){
-            for(const [label,viewport] of [['desktop',{width:1280,height:800}],['mobile',{width:390,height:844}]]){
-             const context=await browser.newContext({bypassCSP:true,locale:'he-IL',viewport});
-             const page=await context.newPage();
-             try{
-              const response=await page.goto(url,{waitUntil:'load',timeout:60000});
-              if(response.status()>=400)throw Error('HTTP '+response.status());
-              await page.waitForTimeout(1500);
-              await page.addScriptTag({path:axePath});
-              const compact=r=>({violations:r.violations,incomplete:r.incomplete,passes:r.passes,testEngine:r.testEngine});
-              const tagged=compact(await page.evaluate(tags=>axe.run(document,{runOnly:{type:'tag',values:tags}}),tags));
-              const full=compact(await page.evaluate(()=>axe.run(document)));
-              const info=await page.evaluate(()=>({title:document.title,url:location.href,lang:document.documentElement.lang,dir:document.documentElement.dir,width:innerWidth,scrollWidth:document.documentElement.scrollWidth,headingCounts:[1,2,3,4,5,6].map(n=>[n,document.querySelectorAll('h'+n).length]),dialogs:[...document.querySelectorAll('[role=dialog],[aria-modal=true]')].filter(e=>e.getClientRects().length).map(e=>({role:e.getAttribute('role'),label:e.getAttribute('aria-label'),text:e.textContent.trim().slice(0,150)}))}));
-              const item={name,label,status:response.status(),info,tagged,full};
-              fs.writeFileSync('benchmark-reports/'+name+'-'+label+'-direct-axe.json',JSON.stringify(item,null,2));
-              const sum=r=>({rules:r.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.length,examples:v.nodes.slice(0,2).map(n=>({target:n.target,html:n.html,explanation:n.failureSummary}))})),incomplete:r.incomplete.map(v=>({id:v.id,nodes:v.nodes.length})),passRules:r.passes.length});
-              output.push({name,label,status:response.status(),info,tagged:sum(tagged),full:sum(full)});
-             }catch(e){output.push({name,label,error:String(e)});}
-             await context.close();
+           fs.mkdirSync('paired-reports',{recursive:true});
+           const chrome=cp.spawn(chromium.executablePath(),['--headless','--no-sandbox','--remote-debugging-port=9222','--user-data-dir=/tmp/paired-a11y-profile'],{stdio:'ignore'});
+           let browser;
+           try{
+            for(let i=0;i<40;i++){try{const r=await fetch('http://127.0.0.1:9222/json/version');if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
+            browser=await chromium.connectOverCDP('http://127.0.0.1:9222');
+            for(const [name,url] of [['nextimpact','https://nextimpact.co.il'],['refeel','https://refeel.co.il']]){
+             const page=await browser.contexts()[0].newPage();
+             await page.setViewportSize({width:1280,height:800});
+             await page.goto(url,{waitUntil:'load',timeout:60000});
+             await page.waitForTimeout(1500);
+             const signature=()=>page.evaluate(()=>({url:location.href,width:innerWidth,height:innerHeight,title:document.title,labels:[...document.querySelectorAll('a[aria-label]')].map(e=>[e.textContent.trim(),e.getAttribute('aria-label')]),elementCount:document.querySelectorAll('*').length}));
+             const before=await signature();
+             let result;
+             try{result=await execFile('npx',['-y','@accesslint/cli@0.13.0','scan',url,'--attach','--format','json'],{timeout:120000,maxBuffer:10*1024*1024});}
+             catch(e){if(e.stdout)result=e;else throw e;}
+             const al=JSON.parse(result.stdout);
+             await page.addScriptTag({path:require.resolve('axe-core/axe.min.js')});
+             const tagged=await page.evaluate(tags=>axe.run(document,{runOnly:{type:'tag',values:tags}}),tags);
+             const explicit=await page.evaluate(()=>axe.run(document,{runOnly:{type:'rule',values:['label-content-name-mismatch','skip-link','heading-order','landmark-one-main']}}));
+             const after=await signature();
+             const record={name,before,after,accesslint:al,axeTagged:tagged,axeSelected:explicit};
+             fs.writeFileSync('paired-reports/'+name+'.json',JSON.stringify(record,null,2));
+             const summary=r=>({violations:r.violations.map(v=>({id:v.id,n:v.nodes.length,examples:v.nodes.slice(0,2).map(n=>({html:n.html,target:n.target,explanation:n.failureSummary}))})),incomplete:r.incomplete.map(v=>({id:v.id,n:v.nodes.length}))});
+             console.log('PAIRED_RESULT '+JSON.stringify({name,before,after,accesslint:{engine:al.testEngine,env:al.testEnvironment,violations:al.violations},axeTagged:summary(tagged),axeSelected:summary(explicit)}));
+             await page.close();
             }
-           }
-           await browser.close();
-           fs.writeFileSync('benchmark-reports/direct-summary.json',JSON.stringify(output,null,2));
-           console.log('DIRECT_AXE_SUMMARY '+JSON.stringify(output));
-          })().catch(e=>{console.error(e);process.exit(1)});
+           }finally{if(browser)await browser.close();chrome.kill();}
+          })().catch(e=>{console.error(e);process.exitCode=1});
           JS
-          node benchmark-probe.cjs
-      - name: Compare AccessLint CLI 0.13.0 on both live pages
-        run: |
-          python - <<'PY'
-          import collections,json,pathlib,subprocess,time,urllib.request
-          out=pathlib.Path('benchmark-reports')
-          exe=subprocess.check_output(['node','-e',"console.log(require('playwright').chromium.executablePath())"],text=True).strip()
-          chrome=subprocess.Popen([exe,'--headless','--no-sandbox','--remote-debugging-port=9222','--user-data-dir=/tmp/a11y-benchmark-profile'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-          try:
-           for attempt in range(40):
-            try:
-             urllib.request.urlopen('http://127.0.0.1:9222/json/version',timeout=1).read()
-             break
-            except Exception:time.sleep(.25)
-           for name,url in [('nextimpact','https://nextimpact.co.il'),('refeel','https://refeel.co.il')]:
-            p=subprocess.run(['npx','-y','@accesslint/cli@0.13.0','scan',url,'--format','json'],capture_output=True,text=True,timeout=150)
-            (out/(name+'-accesslint.json')).write_text(p.stdout)
-            (out/(name+'-accesslint-stderr.txt')).write_text(p.stderr)
-            try:
-             data=json.loads(p.stdout)
-             print('ACCESSLINT_RESULT '+json.dumps({'name':name,'exit_code':p.returncode,'data':data},ensure_ascii=False),flush=True)
-            except Exception:
-             print('ACCESSLINT_ERROR '+json.dumps({'name':name,'exit_code':p.returncode,'stderr':p.stderr[-1500:],'stdout':p.stdout[:500]}),flush=True)
-          finally:
-           chrome.terminate()
-           chrome.wait(timeout=15)
-          
-          PY
+          node paired-probe.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: two-site-accessibility-comparison
-          path: benchmark-reports/
+          name: matched-viewport-comparison
+          path: paired-reports/
           if-no-files-found: error
