@@ -26,7 +26,13 @@ python scripts/audit.py --path "./my app"
 python scripts/audit.py --url https://example.co.il --output ./accessibility-report
 ```
 
-The repository also includes an agent skill for Codex and Claude Code. See [SKILL.md](SKILL.md). Skill installation does not replace installing the Python dependencies.
+The repository also includes an agent skill for Codex and Claude Code. Install it from your project directory:
+
+```bash
+npx skills add MatanOps/israeli-accessibility-auditor
+```
+
+This exact command was verified against the public repository with `skills` 1.7.0 and Node.js 26.5.0; that installer requires Node.js 22.20+. See [SKILL.md](SKILL.md). Skill installation copies the bundled scripts and references; it does not install the Python dependencies. Create a virtual environment and install the `requirements.txt` from the installed skill directory before running its `scripts/audit.py`.
 
 After installing the skill, ask Codex to “Use `$israeli-accessibility-auditor` to audit this project; do not edit application code.” In Claude Code, invoke `/israeli-accessibility-auditor` with the project path or URL. The agent can add browser observations and retain a clear human-testing handoff.
 
