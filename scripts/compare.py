@@ -86,6 +86,9 @@ def _coverage_gap(before, after):
         return "The current report contains operational errors."
     if current.get("status") != "completed" or current.get("rendered") is not True:
         return "The current rendered audit did not complete."
+    if "site" in current and (not isinstance(current["site"], dict)
+                              or current["site"].get("complete") is not True):
+        return "The current website coverage did not complete."
     old_target = before.get("scope", {}).get("target")
     new_target = after.get("scope", {}).get("target")
     if not isinstance(old_target, str) or not old_target or old_target != new_target:
@@ -172,7 +175,15 @@ def compare_reports(before, after):
             continue
         locations = _locations(old)
         observed = run.get("observed_selectors")
-        if not locations or not isinstance(observed, dict) or any(observed.get(selector) is not True for _, selector in locations):
+        if isinstance(run.get("site"), dict):
+            by_page = run.get("observed_selectors_by_page")
+            still_present = (bool(locations) and isinstance(by_page, dict) and all(
+                isinstance(by_page.get(url), dict) and by_page[url].get(selector) is True
+                for url, selector in locations))
+        else:
+            still_present = bool(locations) and isinstance(observed, dict) and all(
+                observed.get(selector) is True for _, selector in locations)
+        if not still_present:
             result["not_tested"].append(_entry(identity, old, new, "The old selector was removed or its continued presence was not observed."))
             continue
         if old["status"] != "fail" or old.get("evidence_type") != "automatically-verified":

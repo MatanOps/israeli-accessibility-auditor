@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from repair_packet import build_packet, browser_script
 
 REPO_URL = 'https://github.com/MatanOps/israeli-accessibility-auditor'
-INSTALL_CMD = 'npx skills add MatanOps/israeli-accessibility-auditor'
+INSTALL_CMD = 'npx skills add MatanOps/israeli-accessibility-auditor --global --agent codex claude-code --yes'
 
 
 def _packet():

@@ -2,7 +2,7 @@
 'use strict';
 
 // Internal subprocess adapter (not a public CLI).
-// stdin:  one JSON object {url, timeout_ms, selectors}
+// stdin:  one JSON object {url, timeout_ms, selectors, allowed_origin?}
 // stdout: exactly one JSON object
 //   {ok, html, axe:{violations,incomplete,passes,inapplicable,testEngine}, run:{...}, errors:[...]}
 // The whole run is hard-bounded by timeout_ms (default 30000).
@@ -166,8 +166,74 @@ function emptyAxe() {
   return { violations: [], incomplete: [], passes: [], inapplicable: [], testEngine: {} };
 }
 
+function rejectNavigation(url, reason) {
+  if (!state.run.blocked_navigation) {
+    state.run.blocked_navigation = { url, reason };
+    state.errors.push('navigation blocked by allowed_origin: ' + reason);
+  }
+}
+
+function withinOrigin(url, origin) {
+  try {
+    const parsed = new URL(url);
+    return ['http:', 'https:'].includes(parsed.protocol)
+      && !parsed.username && !parsed.password && parsed.origin === origin;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function installOriginGuard(context, page, origin) {
+  // Playwright route handlers only see the first URL of a redirect chain.
+  // Chromium Fetch pauses EVERY Document request, including redirect targets,
+  // before dispatch. Assets and subframe documents remain unrestricted.
+  const session = await context.newCDPSession(page);
+  const { frameTree } = await session.send('Page.getFrameTree');
+  const mainFrameId = frameTree.frame.id;
+  session.on('Fetch.requestPaused', (event) => {
+    const blocked = event.frameId === mainFrameId && !withinOrigin(event.request.url, origin);
+    if (blocked) rejectNavigation(event.request.url, 'main-frame destination is outside the allowed HTTP(S) origin');
+    session.send(blocked ? 'Fetch.failRequest' : 'Fetch.continueRequest', blocked
+      ? { requestId: event.requestId, errorReason: 'BlockedByClient' }
+      : { requestId: event.requestId }).catch((err) => {
+      if (state.emitted) return;
+      rejectNavigation(event.request.url, 'navigation interception failed');
+      shutdown(false);
+    });
+  });
+  await session.send('Fetch.enable', {
+    patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }],
+  });
+  // Non-network document navigations (e.g. data:) must also invalidate a scan.
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && !withinOrigin(frame.url(), origin)) {
+      rejectNavigation(frame.url(), 'main-frame document left the allowed HTTP(S) origin');
+    }
+  });
+}
+
 function emit(ok) {
   if (state.emitted) return;
+  // A redirect may happen during readiness or axe. Never return captured
+  // evidence as a successful partial scan after a scope violation.
+  if (state.run.blocked_navigation) {
+    ok = false;
+    state.html = '';
+    state.axe = null;
+    state.run.status = 'not-performed';
+    state.run.rendered = false;
+    state.run.states = [];
+    state.run.engines = {};
+    state.run.observed_selectors = {};
+    state.run.readiness = {
+      verdict: 'navigation-blocked',
+      reason: 'הניווט חרג מהאתר שנבחר לבדיקה.',
+      next_step: 'בחרו כתובת באותו אתר והפעילו את הבדיקה מחדש.',
+    };
+    delete state.run.skip_links;
+    delete state.run.rules;
+    delete state.run.axe_policy;
+  }
   state.emitted = true;
   state.run.finished_at = new Date().toISOString();
   const payload = {
@@ -268,6 +334,9 @@ async function main() {
   try {
     const raw = await readStdin();
     input = JSON.parse(raw);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('expected a JSON object');
+    }
   } catch (err) {
     state.errors.push('invalid stdin JSON: ' + String(err && err.message ? err.message : err));
     return shutdown(false);
@@ -303,6 +372,30 @@ async function main() {
     return shutdown(false);
   }
 
+  let allowedOrigin = null;
+  if (Object.prototype.hasOwnProperty.call(input, 'allowed_origin')) {
+    try {
+      if (typeof input.allowed_origin !== 'string' || !input.allowed_origin.trim()) {
+        throw new Error('expected an HTTP(S) origin string');
+      }
+      const origin = new URL(input.allowed_origin);
+      if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password
+          || origin.pathname !== '/' || origin.search || origin.hash
+          || !/^https?:\/\/[^/?#]+\/?$/i.test(input.allowed_origin)) {
+        throw new Error('expected an HTTP(S) origin without credentials, path, query or fragment');
+      }
+      allowedOrigin = origin.origin;
+    } catch (err) {
+      state.errors.push('invalid allowed_origin: ' + String(err.message || err));
+      return shutdown(false);
+    }
+    state.run.allowed_origin = allowedOrigin;
+    if (!withinOrigin(url, allowedOrigin)) {
+      rejectNavigation(url, 'initial URL is outside the allowed HTTP(S) origin');
+      return shutdown(false);
+    }
+  }
+
   let playwright;
   let axeSourcePath;
   try {
@@ -318,6 +411,9 @@ async function main() {
     // PLAYWRIGHT_BROWSERS_PATH from the environment is honored automatically.
     state.browser = await playwright.chromium.launch({
       headless: true,
+      // Scoped scans must not open unguarded secondary top-level pages.
+      // Chromium's headless switch blocks window.open before its first request.
+      ...(allowedOrigin ? { args: ['--block-new-web-contents'] } : {}),
       timeout: phaseBudget(scaledReserve(0.5, POST_NAV_RESERVE_MS + 5000), 15000),
     });
   } catch (err) {
@@ -333,8 +429,12 @@ async function main() {
       bypassCSP: true,
       locale: 'he-IL',
       viewport: { width: 1280, height: 800 },
+      // A fresh context has no user profile; guarded runs also cannot install
+      // a service worker that would bypass document request interception.
+      ...(allowedOrigin ? { serviceWorkers: 'block' } : {}),
     });
     page = await context.newPage();
+    if (allowedOrigin) await installOriginGuard(context, page, allowedOrigin);
   } catch (err) {
     state.errors.push('browser context failed: '
       + String(err && err.message ? err.message : err).split('\n')[0]);
@@ -401,6 +501,7 @@ async function main() {
   if (remaining() > postNavReserve()) {
     await page.waitForTimeout(Math.min(500, remaining() - postNavReserve()));
   }
+  if (state.run.blocked_navigation) return shutdown(false);
 
   // Early rejection of pages that cannot be meaningfully audited.
   let evidence;
@@ -460,6 +561,7 @@ async function main() {
     state.errors.push('page appears to be a login wall; scan not performed');
     return shutdown(false);
   }
+  if (state.run.blocked_navigation) return shutdown(false);
 
   try {
     state.run.skip_links = await require('./rendered_checks.cjs').inspectSkipLinks(page);
@@ -494,6 +596,7 @@ async function main() {
     return shutdown(false);
   }
   state.run.status = 'partial';
+  if (state.run.blocked_navigation) return shutdown(false);
 
   // Inject the locally installed axe-core bundle (never a CDN) and run it.
   try {

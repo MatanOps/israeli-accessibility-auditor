@@ -244,7 +244,7 @@ class SprintIntegrationTests(unittest.TestCase):
         self.assertEqual(report["metadata"]["run"]["status"], "partial")
         html = (output / "accessibility-report.html").read_text(encoding="utf-8")
         self.assertIn('dir="rtl"', html)
-        self.assertIn("Next Impact", html)
+        self.assertIn("Israeli Accessibility Auditor", html)
 
     def test_rendered_cli_error_still_writes_all_reports(self):
         self.require_browser()

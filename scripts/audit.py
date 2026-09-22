@@ -15,13 +15,14 @@ from report import VERSION, build_report, write_reports
 
 def parser():
     result = argparse.ArgumentParser(
-        description="Accessibility audit: rendered URL with local Playwright/axe, or static frontend source.",
+        description="Accessibility audit: public website, one rendered page, or static frontend source.",
         epilog="Exit codes: 0 = no fail/warning findings, 1 = findings, 2 = operational error. "
                "Exit 0 never means WCAG or legal compliance.",
     )
     target = result.add_mutually_exclusive_group(required=True)
     target.add_argument("--path", help="Frontend file or project directory")
     target.add_argument("--url", help="HTTP(S) page rendered with the local browser and axe-core")
+    target.add_argument("--site", help="Discover and audit public same-origin pages in one site report")
     result.add_argument("--format", choices=("markdown", "json"), default="markdown",
                         help="Console format; all three report files are always written")
     result.add_argument("--output", default="accessibility-report", help="Report directory")
@@ -29,6 +30,8 @@ def parser():
     result.add_argument("--prepare", action="store_true", help="Prepare/reuse isolated dependencies automatically")
     result.add_argument("--timeout", type=float, default=30, help="Rendered target budget in seconds (2-120)")
     result.add_argument("--baseline", help="Previous JSON report for conservative before/after comparison")
+    result.add_argument("--max-pages", type=int, default=100, help="Site page budget (1-5000; default 100)")
+    result.add_argument("--max-seconds", type=float, default=600, help="Site time budget (5-7200 seconds; default 600)")
     return result
 
 
@@ -36,11 +39,13 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def rendered_scan(url, timeout, selectors):
+def rendered_scan(url, timeout, selectors, allowed_origin=None):
     node = shutil.which("node")
     if not node:
         raise RuntimeError("חסר Node.js. התקינו Node.js 20 ומעלה והפעילו שוב עם --prepare")
     request = {"url": url, "timeout_ms": int(timeout * 1000), "selectors": selectors}
+    if allowed_origin is not None:
+        request["allowed_origin"] = allowed_origin
     process = subprocess.run([node, str(Path(__file__).with_name("browser_scan.cjs"))],
                              input=json.dumps(request), text=True, capture_output=True,
                              timeout=timeout + 5)
@@ -200,21 +205,28 @@ def main(argv=None):
     args = parser().parse_args(arguments)
     findings, errors = [], []
     files_scanned = 0
-    mode = "source" if args.path else "url"
-    target = args.path or args.url
-    run = {"status": "not-performed", "started_at": now(), "original_url": args.url,
+    mode = "source" if args.path else "site" if args.site else "url"
+    target = args.path or args.site or args.url
+    run = {"status": "not-performed", "started_at": now(), "original_url": args.site or args.url,
            "final_url": None, "rendered": False, "engines": {}, "pages": [], "states": [],
            "untested": ["Other pages, authenticated states, keyboard and screen-reader interactions"],
            "observed_selectors": {}, "attempts": 0}
     metadata = {"run": run, "rendered": False,
-                "network_scope": "one supplied URL and its page resources" if args.url else "none"}
+                "network_scope": "discovered public same-origin pages and their resources" if args.site else
+                "one supplied URL and its page resources" if args.url else "none"}
     baseline = None
     try:
         if not 2 <= args.timeout <= 120:
             raise ValueError("--timeout must be between 2 and 120 seconds")
+        if not 1 <= args.max_pages <= 5000:
+            raise ValueError("--max-pages must be between 1 and 5000")
+        if not 5 <= args.max_seconds <= 7200:
+            raise ValueError("--max-seconds must be between 5 and 7200 seconds")
+        if args.static and args.site:
+            raise ValueError("--static cannot be combined with --site; use --url for one-page HTML auditing")
         if args.prepare:
             from bootstrap import prepare
-            managed = prepare(needs_browser=bool(args.url and not args.static))
+            managed = prepare(needs_browser=bool((args.url or args.site) and not args.static))
             return subprocess.call([managed, str(Path(__file__).resolve()),
                                     *[arg for arg in arguments if arg != "--prepare"]])
         if args.baseline:
@@ -247,6 +259,38 @@ def main(argv=None):
             files_scanned = 1
             run.update(status='partial', final_url=final_url, pages=[final_url], states=['static-html'],
                        engines={'static': VERSION}, attempts=1)
+        elif args.site:
+            from site_scan import scan_site
+            selectors = []
+            if baseline:
+                for item in baseline['findings']:
+                    if not isinstance(item, dict):
+                        raise ValueError("Invalid baseline finding")
+                    for loc in item.get('locations') or [item.get('location', {})]:
+                        if isinstance(loc, dict) and isinstance(loc.get('selector'), str):
+                            selectors.append(loc['selector'])
+            def scan_page(url, budget, allowed_origin):
+                print("בודק עמוד: " + url, file=sys.stderr, flush=True)
+                return rendered_scan(url, budget, list(set(selectors)), allowed_origin)
+            scanned_site = scan_site(args.site, scan_page, timeout=args.timeout,
+                                     max_pages=args.max_pages, max_seconds=args.max_seconds)
+            run.update(scanned_site['run'])
+            errors.extend(str(error) for error in scanned_site['errors'])
+            if (run.get('status') != 'completed'
+                    or not isinstance(run.get('site'), dict)
+                    or run['site'].get('complete') is not True) and not errors:
+                errors.append('סריקת האתר לא הושלמה. בדקו בדוח אילו עמודים נבדקו ומה נותר לבדיקה.')
+            run['observed_selectors_by_page'] = {}
+            for scanned in scanned_site['results']:
+                page_run = scanned['run']
+                page_url = page_run.get('final_url') or page_run.get('original_url')
+                page_findings = axe_findings(scanned['axe'], page_url)
+                page_findings.extend(rendered_supplement(scanned, page_findings, page_url))
+                findings.extend(page_findings)
+                files_scanned += 1
+                run['observed_selectors_by_page'][page_url] = page_run.get('observed_selectors', {})
+            metadata['rendered'] = bool(files_scanned)
+            metadata['final_url'] = run.get('final_url')
         else:
             selectors = []
             if baseline:
