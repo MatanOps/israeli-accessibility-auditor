@@ -30,6 +30,42 @@ jobs:
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           raise SystemExit(0 if result.wasSuccessful() and not result.skipped else 1)
           PY
+      - name: Verify skill installation and first-run preparation
+        env:
+          AUDITOR_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          with tempfile.TemporaryDirectory(prefix='auditor-client-') as directory:
+              client = Path(directory)
+              source = 'MatanOps/israeli-accessibility-auditor#' + os.environ['AUDITOR_INSTALL_REF']
+              subprocess.run(['npx', '-y', 'skills@1.7.0', 'add', source,
+                              '--agent', 'codex', '-y', '--copy'], cwd=client, check=True, timeout=180)
+              candidates = list(client.glob('.agents/skills/*/scripts/audit.py'))
+              if len(candidates) != 1:
+                  raise RuntimeError('Expected exactly one installed auditor: ' + str(candidates))
+              script = candidates[0]
+              for attempt in ('first-run', 'cached-run'):
+                  output = Path.cwd() / 'verification-reports' / ('installed-' + attempt)
+                  completed = subprocess.run([sys.executable, str(script), '--prepare',
+                                              '--url', 'https://nextimpact.co.il', '--timeout', '60',
+                                              '--output', str(output)], cwd=client, capture_output=True,
+                                             text=True, timeout=600)
+                  print(completed.stderr, flush=True)
+                  if completed.returncode not in (0, 1):
+                      raise RuntimeError(attempt + ' failed with exit ' + str(completed.returncode))
+                  report = json.loads((output / 'accessibility-report.json').read_text())
+                  run = report['metadata']['run']
+                  assert run['status'] == 'completed' and run['rendered'] and not report['errors']
+                  print(json.dumps({'installation': attempt, 'status': run['status'],
+                                    'http_status': run['http_status'], 'summary': report['summary']},
+                                   ensure_ascii=False), flush=True)
+          PY
       - name: Scan two public pages and record actual results
         run: |
           .runtime/venv/bin/python - <<'PY'
