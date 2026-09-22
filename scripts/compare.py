@@ -25,6 +25,8 @@ def _validate(report, label):
     run = report.get("metadata", {}).get("run", {})
     if not isinstance(run, dict):
         raise ValueError("{}.metadata.run must be an object".format(label))
+    if "engines" in run and not isinstance(run["engines"], dict):
+        raise ValueError("{}.metadata.run.engines must be an object".format(label))
     seen = set()
     for item in report["findings"]:
         if not isinstance(item, dict):
@@ -95,6 +97,10 @@ def _coverage_gap(before, after):
         old_values, new_values = _coverage_set(old.get(key)), _coverage_set(current.get(key))
         if old_values is None or new_values is None or not old_values <= new_values:
             return "The {} coverage is missing or reduced.".format(key)
+    if "rules" in old:
+        old_rules, new_rules = _coverage_set(old["rules"]), _coverage_set(current.get("rules"))
+        if old_rules is None or new_rules is None or not old_rules <= new_rules:
+            return "The rule coverage is missing or reduced."
     old_engines, new_engines = old.get("engines"), current.get("engines")
     if not isinstance(old_engines, dict) or not isinstance(new_engines, dict) or not old_engines.get("axe"):
         return "The engine coverage cannot be established."
@@ -102,6 +108,11 @@ def _coverage_gap(before, after):
         if not isinstance(version, str) or not version or new_engines.get(engine) != version:
             return "The {} engine or version differs from the baseline.".format(engine)
     return None
+
+
+def _verified_engine(item):
+    return item.get("engine") == "axe" or (
+        item.get("engine") == "rendered-dom" and item.get("rule_id") == "skip-link-target-missing")
 
 
 def _entry(identity, before, after, reason):
@@ -112,8 +123,8 @@ def _entry(identity, before, after, reason):
 def compare_reports(before, after):
     """Return fixed_verified, changed_unverified, remaining, new and not_tested.
 
-    A verified fix requires a prior verified axe failure, equivalent completed
-    rendered coverage, the old selector still present, and a verified axe pass
+    A verified fix requires a prior verified rendered failure, equivalent completed
+    rendered coverage, the old selector still present, and a verified rendered pass
     for that exact rule AND URL/selector. Static disappearance cannot prove a
     fix. Pass-only records are supporting evidence, never new issues.
     Invalid report structures raise ValueError instead of silently proving fixes.
@@ -124,9 +135,9 @@ def compare_reports(before, after):
     current = {_identity(item): item for item in after["findings"]}
     pass_locations = {}
     for item in after["findings"]:
-        if (item["status"] == "pass" and item.get("engine") == "axe"
+        if (item["status"] == "pass" and _verified_engine(item)
                 and item.get("evidence_type") == "automatically-verified" and item.get("rule_id")):
-            pass_locations.setdefault(item["rule_id"], set()).update(_locations(item))
+            pass_locations.setdefault((item["engine"], item["rule_id"]), set()).update(_locations(item))
 
     for identity, old in previous.items():
         if old["status"] == "pass":
@@ -147,9 +158,14 @@ def compare_reports(before, after):
         if after.get("errors") or run.get("status") == "not-performed" or (old_target and new_target and old_target != new_target):
             result["not_tested"].append(_entry(identity, old, new, "Execution failed, was not performed, or targeted a different scope."))
             continue
-        if old.get("engine") != "axe":
+        if not _verified_engine(old):
             result["changed_unverified"].append(_entry(identity, old, new, "Static finding absence does not prove remediation."))
             continue
+        if old.get("engine") == "rendered-dom":
+            old_version = _run(before).get("engines", {}).get("rendered-dom")
+            if not isinstance(old_version, str) or not old_version:
+                result["not_tested"].append(_entry(identity, old, new, "The rendered DOM check version is missing."))
+                continue
         gap = _coverage_gap(before, after)
         if gap:
             result["not_tested"].append(_entry(identity, old, new, gap))
@@ -162,8 +178,8 @@ def compare_reports(before, after):
         if old["status"] != "fail" or old.get("evidence_type") != "automatically-verified":
             result["changed_unverified"].append(_entry(identity, old, new, "The prior finding was heuristic, not a verified failure."))
             continue
-        if locations <= pass_locations.get(old.get("rule_id"), set()):
-            result["fixed_verified"].append(_entry(identity, old, new, "The same axe rule passed for the still-present selector under equivalent completed coverage."))
+        if locations <= pass_locations.get((old.get("engine"), old.get("rule_id")), set()):
+            result["fixed_verified"].append(_entry(identity, old, new, "The same rendered rule passed for the still-present selector under equivalent completed coverage."))
         else:
             result["changed_unverified"].append(_entry(identity, old, new, "No verified pass covers the old rule and exact URL/selector."))
 

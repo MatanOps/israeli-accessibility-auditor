@@ -15,6 +15,108 @@ const TRANSIENT_HTTP = new Set([429, 502, 503, 504]);
 // Reserve for post-navigation work (readiness, axe, extraction, teardown).
 const POST_NAV_RESERVE_MS = 7000;
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'];
+// Rules the WCAG tag selection alone cannot run in axe 4.13.0:
+// label-content-name-mismatch is tagged experimental (default tagExclude drops
+// it even though it carries wcag21a), and the structural rules carry only
+// best-practice tags. ruleShouldRun honors an explicit per-rule enable before
+// tag matching, so these run in addition to the tag selection; actual
+// execution is recorded per rule in run.axe_policy.rule_execution.
+const AXE_EXTRA_RULES = [
+  'label-content-name-mismatch',
+  'skip-link',
+  'heading-order',
+  'landmark-one-main',
+  'page-has-heading-one',
+  'region',
+];
+const AXE_EXPERIMENTAL_RULES = ['label-content-name-mismatch'];
+
+// --- Challenge / interstitial detection ------------------------------------
+// HTTP 200 with an HTML body is not proof the requested page was reached:
+// WAF challenges and waiting rooms answer 200 with HTML. Detection is
+// deliberately conservative: markers only count when the page also lacks real
+// content, so a normal page that merely says "please wait" is never blocked.
+// DOM markers used by challenge providers on their interstitial pages.
+const CHALLENGE_MARKER_SELECTORS = [
+  '#challenge-form',
+  '#challenge-running',
+  '#challenge-error-title',
+  '#cf-challenge-running',
+  '.cf-browser-verification',
+  'script[src*="/cdn-cgi/challenge-platform/"]',
+  'iframe[src*="_Incapsula_Resource"]',
+  'iframe[src*="captcha-delivery.com"]',
+  '#px-captcha',
+];
+// Interstitial wording (lowercase). Deliberately NOT a bare "please wait".
+const CHALLENGE_PHRASES = [
+  'one moment, please',
+  'just a moment',
+  'checking your browser',
+  'checking if the site connection is secure',
+  'verifying you are human',
+  'verify you are human',
+  'attention required',
+  'ddos protection by',
+  'request is being verified',
+  'enable javascript and cookies to continue',
+  'pardon our interruption',
+  'access to this page has been denied',
+  'browser will redirect to your requested content shortly',
+];
+
+function collectReadinessEvidence(page) {
+  return page.evaluate(({ markerSelectors, phrases }) => {
+    const body = document.body;
+    const text = body ? body.innerText.trim() : '';
+    const title = document.title || '';
+    const titleLower = title.toLowerCase();
+    const textLower = text.slice(0, 5000).toLowerCase();
+    const strong = markerSelectors.filter((sel) => {
+      try { return !!document.querySelector(sel); } catch (err) { return false; }
+    });
+    return {
+      title: title.slice(0, 200),
+      text_length: text.length,
+      link_count: document.querySelectorAll('a[href]').length,
+      heading_count: document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]').length,
+      paragraph_count: document.querySelectorAll('p,li').length,
+      interactive_count: document.querySelectorAll(
+        'input:not([type="hidden"]),button,a[href],textarea,select').length,
+      has_visual: !!(body && body.querySelector('img,svg,canvas,video,iframe')),
+      has_password: !!document.querySelector('input[type="password"]'),
+      element_count: body ? body.getElementsByTagName('*').length : 0,
+      strong_markers: strong,
+      title_markers: phrases.filter((p) => titleLower.includes(p)),
+      phrase_markers: phrases.filter((p) => textLower.includes(p)),
+    };
+  }, { markerSelectors: CHALLENGE_MARKER_SELECTORS, phrases: CHALLENGE_PHRASES });
+}
+
+// Returns a human-readable reason when the page looks like a challenge or
+// interstitial, or null for real content. Provider gates corroborated by an
+// interstitial title stay blocked even when they contain lengthy help text.
+// Other markers count only on thin pages; embedded CAPTCHA widgets alone do not.
+function challengeReason(evidence) {
+  if (evidence.title_markers.length && evidence.strong_markers.length) {
+    return 'interstitial title and challenge provider gate markers';
+  }
+  const thin = evidence.text_length < 900
+    && evidence.link_count < 5
+    && evidence.heading_count <= 1
+    && evidence.paragraph_count <= 5;
+  if (!thin) return null;
+  if (evidence.strong_markers.length) {
+    return 'challenge provider markers present (' + evidence.strong_markers.join(', ') + ')';
+  }
+  if (evidence.title_markers.length) {
+    return 'interstitial title "' + evidence.title + '" with no real page content';
+  }
+  if (evidence.phrase_markers.length && evidence.text_length < 350 && evidence.link_count < 3) {
+    return 'interstitial text "' + evidence.phrase_markers[0] + '" with no real page content';
+  }
+  return null;
+}
 
 const state = {
   emitted: false,
@@ -79,6 +181,18 @@ function emit(ok) {
 }
 
 async function shutdown(ok) {
+  if (!ok && state.run.status === 'not-performed') {
+    const technical = state.errors.join(' ');
+    const isChallenge = /challenge|interstitial|requested page not verified/i.test(technical);
+    state.run.readiness = Object.assign({}, state.run.readiness || {}, {
+      reason: isChallenge ? 'התקבל דף המתנה או בדיקת אבטחה במקום תוכן האתר.'
+        : /HTTP 40[137]|HTTP 451|blocked|login wall/i.test(technical) ? 'הגישה לעמוד חסומה או דורשת התחברות.'
+        : /timeout|budget|expired/i.test(technical) ? 'התוכן לא היה מוכן בתוך הזמן שהוקצב.'
+        : /non-HTML|empty|visible/i.test(technical) ? 'לא התקבל עמוד HTML עם תוכן זמין לבדיקה.'
+        : 'לא ניתן היה להשלים בדיקה תקפה של העמוד המבוקש.',
+      next_step: 'פתחו את הכתובת בדפדפן רגיל. אם נדרשת גישה, פנו למתחזק לקבלת דרך מורשית לבדיקה; אין לעקוף הגנות או CAPTCHA.',
+    });
+  }
   emit(ok);
   if (state.browser) {
     // Best-effort close; Playwright also kills owned browsers on process exit.
@@ -289,31 +403,69 @@ async function main() {
   }
 
   // Early rejection of pages that cannot be meaningfully audited.
-  let probe;
+  let evidence;
   try {
-    probe = await page.evaluate(() => {
-      const body = document.body;
-      const text = body ? body.innerText.trim() : '';
-      return {
-        textLength: text.length,
-        hasVisual: !!(body && body.querySelector('img,svg,canvas,video,iframe')),
-        hasPassword: !!document.querySelector('input[type="password"]'),
-        elementCount: body ? body.getElementsByTagName('*').length : 0,
-        title: document.title || '',
-      };
-    });
+    evidence = await collectReadinessEvidence(page);
   } catch (err) {
     state.errors.push('page probe failed: '
       + String(err && err.message ? err.message : err).split('\n')[0]);
     return shutdown(false);
   }
-  state.run.page_title = probe.title;
-  if (probe.textLength === 0 && !probe.hasVisual && !await page.locator('input:not([type="hidden"]),button,a[href],textarea,select').count()) {
+  state.run.page_title = evidence.title;
+  if (evidence.text_length === 0 && !evidence.has_visual && evidence.interactive_count === 0) {
     state.errors.push('page is effectively empty; scan not performed');
     return shutdown(false);
   }
-  if (probe.hasPassword && probe.textLength < 400) {
+
+  // Challenge suspicion gets a short bounded grace window: some interstitials
+  // (and loading gates) replace themselves with the real page. We only wait
+  // passively within the budget; there is no attempt to solve or bypass.
+  let reason = challengeReason(evidence);
+  let readinessChecks = 1;
+  if (reason) {
+    const graceMs = Math.max(0, Math.min(scaledReserve(0.2, 4000), remaining() - postNavReserve() - 500));
+    const graceDeadline = Date.now() + graceMs;
+    while (reason && Date.now() + 400 <= graceDeadline) {
+      await page.waitForTimeout(400);
+      try {
+        evidence = await collectReadinessEvidence(page);
+      } catch (err) {
+        break;
+      }
+      readinessChecks += 1;
+      reason = challengeReason(evidence);
+    }
+  }
+  state.run.readiness = {
+    verdict: reason ? 'challenge-suspected' : 'content',
+    checks: readinessChecks,
+    evidence: {
+      title: evidence.title,
+      text_length: evidence.text_length,
+      link_count: evidence.link_count,
+      heading_count: evidence.heading_count,
+      paragraph_count: evidence.paragraph_count,
+      strong_markers: evidence.strong_markers,
+      title_markers: evidence.title_markers,
+      phrase_markers: evidence.phrase_markers,
+    },
+  };
+  if (reason) {
+    // The requested page was not verified: no HTML capture, no axe findings.
+    state.errors.push('requested page not verified: ' + reason + '; scan not performed');
+    return shutdown(false);
+  }
+  state.run.page_title = evidence.title;
+  if (evidence.has_password && evidence.text_length < 400) {
     state.errors.push('page appears to be a login wall; scan not performed');
+    return shutdown(false);
+  }
+
+  try {
+    state.run.skip_links = await require('./rendered_checks.cjs').inspectSkipLinks(page);
+    state.run.engines['rendered-dom'] = '1.0.0';
+  } catch (err) {
+    state.errors.push('rendered skip-link evidence failed: ' + String(err.message || err));
     return shutdown(false);
   }
 
@@ -349,14 +501,49 @@ async function main() {
     const axeReady = await page.evaluate(() => typeof window.axe !== 'undefined');
     if (!axeReady) throw new Error('axe global missing after injection');
     const axeTimeout = phaseBudget(2000);
+    const axeOptions = {
+      runOnly: { type: 'tag', values: AXE_TAGS },
+      rules: AXE_EXTRA_RULES.reduce((acc, id) => {
+        acc[id] = { enabled: true };
+        return acc;
+      }, {}),
+    };
+    // Exact selection policy, recorded before the run so comparisons can stay
+    // conservative even when the run itself fails.
+    state.run.axe_policy = {
+      run_only_tags: AXE_TAGS.slice(),
+      enabled_rules: AXE_EXTRA_RULES.slice(),
+      experimental_rules: AXE_EXPERIMENTAL_RULES.slice(),
+    };
     const results = await Promise.race([
-      page.evaluate((tags) => window.axe.run(document, {
-        runOnly: { type: 'tag', values: tags },
-      }), AXE_TAGS),
+      page.evaluate((opts) => window.axe.run(document, opts), axeOptions),
       new Promise((_, reject) => setTimeout(
         () => reject(new Error('axe.run exceeded remaining budget')), axeTimeout
       )),
     ]);
+    // Per-rule proof of execution: a rule that ran appears in exactly one
+    // result bucket (inapplicable still counts as executed).
+    state.run.axe_policy.rule_execution = AXE_EXTRA_RULES.reduce((acc, id) => {
+      const bucket = ['violations', 'incomplete', 'passes', 'inapplicable'].find(
+        (name) => (results[name] || []).some((entry) => entry.id === id)
+      );
+      acc[id] = bucket || 'not-executed';
+      return acc;
+    }, {});
+    // Refuse results if the document became an interstitial during the audit.
+    const finalEvidence = await collectReadinessEvidence(page);
+    const finalChallenge = challengeReason(finalEvidence);
+    if (finalChallenge) {
+      state.run.status = 'not-performed';
+      state.run.rendered = false;
+      state.run.skip_links = [];
+      state.html = '';
+      state.errors.push('requested page not verified: ' + finalChallenge);
+      return shutdown(false);
+    }
+    state.run.rules = [...new Set(['violations', 'incomplete', 'passes', 'inapplicable']
+      .flatMap((bucket) => (results[bucket] || []).map((rule) => rule.id)))].sort();
+    state.run.rules.push('rendered-dom:skip-link-target-missing');
     state.axe = {
       violations: results.violations || [],
       incomplete: results.incomplete || [],
@@ -365,6 +552,7 @@ async function main() {
       testEngine: results.testEngine || {},
     };
     state.run.engines = {
+      'rendered-dom': '1.0.0',
       axe: (results.testEngine && results.testEngine.version) || require('axe-core/package.json').version,
       playwright: require('playwright/package.json').version,
     };

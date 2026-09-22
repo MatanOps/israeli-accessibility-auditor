@@ -32,6 +32,10 @@ GROUP_VERIFIED = "verified"
 GROUP_HEURISTIC = "heuristic"
 GROUP_HUMAN = "human"
 GROUP_PASS = "pass"
+GROUP_INCOMPLETE = "incomplete"
+GROUP_UNTESTED = "untested"
+GROUP_BEST_PRACTICE = "best-practice"
+GROUP_REVIEW = "review"
 
 _STATUS_HE = {
     "fail": "נכשל",
@@ -93,6 +97,14 @@ def _classify(item):
     status = item.get("status")
     if status == "pass":
         return GROUP_PASS
+    if status == "not-tested":
+        return GROUP_UNTESTED
+    if item.get("engine") == "axe" and status == "human-review-required":
+        return GROUP_INCOMPLETE
+    if item.get("standards_basis") == "best-practice" and status == "warning":
+        return GROUP_BEST_PRACTICE
+    if status == "human-review-required" and not _rule_key(item).startswith("human-"):
+        return GROUP_REVIEW
     if status == "fail" and item.get("evidence_type") == "automatically-verified":
         return GROUP_VERIFIED
     if status in ("fail", "warning"):
@@ -162,7 +174,7 @@ def _occurrence_html(item, group, group_explanation, group_remediation):
     """One finding inside a rule card: checkbox, badges, locations, evidence."""
     identity = _identity(item)
     lines = ['<li class="occurrence">']
-    if group != GROUP_PASS and identity:
+    if group not in (GROUP_PASS, GROUP_UNTESTED) and identity:
         lines.append(
             '<label class="pick"><input type="checkbox" class="finding-select" '
             'value="{}" data-group="{}"> כללו בבקשה לסוכן: <code dir="ltr">{}</code></label>'.format(
@@ -174,6 +186,8 @@ def _occurrence_html(item, group, group_explanation, group_remediation):
     if item.get("wcag_criterion"):
         lines.append('<p class="meta">WCAG: <span lang="en" dir="ltr">{}</span></p>'.format(
             _esc(item["wcag_criterion"])))
+    if item.get("standards_basis") == "best-practice":
+        lines.append('<p class="meta">שיטת עבודה מומלצת — אינה כשל WCAG מאומת.</p>')
     locations = _locations(item)
     if len(locations) == 1:
         lines.append('<p class="meta">מיקום: {}</p>'.format(_location_html(locations[0])))
@@ -284,32 +298,47 @@ def _run_metadata_html(report):
     if run.get("pages"):
         row("עמודים שנבדקו", _esc(len(run["pages"])))
     if run.get("untested"):
-        row("לא נבדק", _esc(", ".join(str(item) for item in run["untested"])))
+        row("תחומים שלא נכללו בסריקה", _esc(", ".join(str(item) for item in run["untested"])))
     return '<dl class="run-meta">{}</dl>'.format("".join(rows))
 
 
 def _summary_html(report):
     summary = report.get("summary") or {}
-    by_status = summary.get("by_status") or {}
+    findings = report.get("findings") or []
+    totals = {group: sum(_classify(item) == group for item in findings) for group in
+              (GROUP_VERIFIED, GROUP_INCOMPLETE, GROUP_HUMAN, GROUP_BEST_PRACTICE, GROUP_HEURISTIC, GROUP_REVIEW)}
     chips = []
-    chips.append(_badge("badge-plain", "ממצאים לטיפול: {}".format(
-        summary.get("actionable_findings", 0))))
-    for status in ("fail", "warning", "human-review-required", "not-tested", "pass"):
-        if status in by_status:
-            chips.append(_badge("badge-plain", "{}: {}".format(
-                _STATUS_HE.get(status, status), by_status[status])))
+    for group, label in ((GROUP_VERIFIED, "מופעי כשל אוטומטי"),
+                         (GROUP_INCOMPLETE, "מופעים שהמנוע לא הכריע בהם"),
+                         (GROUP_HUMAN, "משימות בדיקה כלליות"),
+                         (GROUP_REVIEW, "פריטים נקודתיים לבדיקה אנושית"),
+                         (GROUP_BEST_PRACTICE, "המלצות לשיפור"),
+                         (GROUP_HEURISTIC, "חשדות לאימות")):
+        chips.append(_badge("badge-plain", "{}: {}".format(label, totals[group])))
     chips.append(_badge("badge-plain", "שגיאות תפעוליות: {}".format(
         summary.get("operational_errors", 0))))
     run = report.get("metadata", {}).get("run", {})
     state = run.get("status", "partial")
-    next_step = ("הבדיקה האוטומטית הושלמה לעמוד ולמצב המתועדים. בחרו ממצאים לטיפול והמשיכו לבדיקות האנושיות."
+    next_step = ("הבדיקה האוטומטית הושלמה לעמוד ולמצב המתועדים. בחרו ממצאים לאימות והמשיכו לבדיקות האנושיות."
                  if state == "completed" else "זו בדיקה חלקית. אמתו את החשדות בדפדפן לפני שינוי קוד."
-                 if state == "partial" else "הבדיקה לא בוצעה. פתרו את השגיאה המוצגת והריצו שוב; אין כאן תוצאה תקינה של האתר.")
+                 if state == "partial" else "העמוד המבוקש לא נבדק. פתרו את סיבת העצירה והריצו שוב; אין כאן תוצאת נגישות של האתר.")
+    untested = run.get("untested") or []
+    scope_text = ("תחומים שלא נכללו בסריקה: " + "; ".join(str(item) for item in untested)
+                  if untested else "תחומים שלא נכללו בסריקה: לא תועדו; אין להסיק מכך שהכול נבדק.")
+    if state == "not-performed":
+        readiness = run.get("readiness") or {}
+        reason = readiness.get("reason") if isinstance(readiness, dict) else None
+        reason = reason or "; ".join(str(error) for error in report.get("errors") or []) or "העמוד לא היה זמין לבדיקה תקפה."
+        next_step += " סיבה: " + str(reason)
+        if isinstance(readiness, dict) and readiness.get("next_step"):
+            next_step += " הצעד הבא: " + str(readiness["next_step"])
+        chips = []
     return ('<section aria-labelledby="summary-h"><h2 id="summary-h">תמצית</h2>'
-            '<p>{}</p><p class="badges">{}</p>'
+            '<p>{}</p><p class="badges">{}</p><p>{}</p>'
+            '<p>הספירות מתארות סוגי תוצאות שונים; הן אינן ציון נגישות.</p>'
             '<p class="section-note">היעדר ממצאים אוטומטיים לעולם אינו מהווה '
             'עמידה בתקן או בדין; רמת ההתאמה אינה נקבעת על ידי הכלי.</p>'
-            "</section>").format(_esc(next_step), " ".join(chips))
+            "</section>").format(_esc(next_step), " ".join(chips), _esc(scope_text))
 
 
 def _limitations_html(report):
@@ -343,7 +372,9 @@ def _comparison_html(report):
         '<li>{}: {}</li>'.format(label, len(comparison.get(key, []))) for key,label in labels.items()) + '</ul><p>היעלמות רכיב או ירידה בכיסוי אינן הוכחה לתיקון. פרטי האימות נשמרים גם ב־JSON.</p></section>'
 
 
-def _toolbar_html():
+def _toolbar_html(not_performed=False):
+    if not_performed:
+        return '<section><h2>מה עושים עכשיו?</h2><p>העמוד המבוקש לא נבדק. אין ממצאי אתר תקפים לבחירה ואין חבילת תיקון. הסדירו גישה מורשית לעמוד או בדקו עותק מקומי, ואז הריצו שוב.</p></section>'
     return """<section aria-labelledby="actions-h">
 <h2 id="actions-h">מה עושים עכשיו?</h2>
 <ol class="next-steps">
@@ -352,6 +383,7 @@ def _toolbar_html():
 <li><strong>מקבלים תיקון ובדיקה חוזרת</strong><span>פתחו את פרויקט האתר אצל הסוכן ובקשו: ״טפל רק בממצאים שבחבילה, אמת לפני שינוי ובדוק שוב אחריו. אל תפרוס את האתר.״</span></li>
 </ol>
 <p class="handoff-note"><strong>הלחיצה מכינה הוראות בלבד.</strong> היא לא מפעילה סוכן, לא משנה קוד ולא שולחת מידע. תיקון בפועל מתחיל אצל הסוכן עם גישה לפרויקט ובקשה שלכם.</p>
+<p>באתר WordPress או Elementor דרושה גישה למערכת שבה מנוהלים התוכן והתבניות. כתובת URL לבדה אינה מאפשרת תיקון.</p>
 <div class="toolbar" role="group" aria-label="פעולות על הממצאים שנבחרו">
 <button type="button" id="select-verified">בחירת כל הליקויים המאומתים</button>
 <button type="button" id="copy-selected">העתקת בקשה ל־Codex / Claude</button>
@@ -438,6 +470,7 @@ header.page .meta, header.page .section-note { color: #e2e8f0; }
 header.page .eyebrow { color: #c7d2fe; font-size: .8rem; letter-spacing: .15em; margin: 0 0 .8rem; }
 header.page details { margin-block-start: 1rem; }
 header.page h1 { font-size: clamp(1.45rem, 4vw, 2.2rem); }
+header.page p { overflow-wrap: anywhere; }
 main > section { border-radius: 1rem; padding: 1.5rem; }
 .rule { border-radius: .7rem; }
 .occurrence-details { margin-block-start: .75rem; }
@@ -617,21 +650,25 @@ def _repair_pack_js():
 
 def render_html(report):
     """Render the full standalone Hebrew RTL HTML report as one string."""
+    not_performed = (report.get("metadata") or {}).get("run", {}).get("status") == "not-performed"
     groups = OrderedDict((
         (GROUP_VERIFIED, OrderedDict()),
         (GROUP_HEURISTIC, OrderedDict()),
         (GROUP_HUMAN, OrderedDict()),
         (GROUP_PASS, OrderedDict()),
+        (GROUP_INCOMPLETE, OrderedDict()),
+        (GROUP_UNTESTED, OrderedDict()),
+        (GROUP_BEST_PRACTICE, OrderedDict()),
+        (GROUP_REVIEW, OrderedDict()),
     ))
-    for item in report.get("findings") or []:
+    for item in ([] if not_performed else report.get("findings") or []):
         if not isinstance(item, dict):
             continue
         grouped = groups[_classify(item)]
         grouped.setdefault(_rule_key(item), []).append(item)
 
     sections = [
-        _summary_html(report),
-        _toolbar_html(),
+        _toolbar_html(not_performed),
         _group_section_html(
             "verified", "ליקויים מאומתים אוטומטית",
             "ממצאים במצב fail שאומתו אוטומטית; אלו המועמדים הראשונים לתיקון.",
@@ -643,14 +680,36 @@ def render_html(report):
             groups[GROUP_HEURISTIC], GROUP_HEURISTIC,
             "לא נרשמו אזהרות היוריסטיות."),
         _group_section_html(
-            "human", "בדיקה אנושית נדרשת ותחומים שלא נבדקו",
-            "פריטים שהכלי אינו יכול להכריע בהם: נדרשות בדיקות ידניות או שהבדיקה לא בוצעה.",
+            "best-practice", "המלצות לשיפור לפי שיטות עבודה מומלצות",
+            "אזהרות היוריסטיות נפרדות מכשלי WCAG. יש לאמת את הצורך בשינוי לפני תיקון.",
+            groups[GROUP_BEST_PRACTICE], GROUP_BEST_PRACTICE,
+            "לא נרשמו המלצות מסוג זה."),
+        _group_section_html(
+            "incomplete", "מופעים שהמנוע לא הכריע בהם",
+            "רכיבים מסוימים שנבדקו אך axe-core לא הכריע לגביהם. אלה אינם כשלים מאומתים; נדרש אימות ממוקד.",
+            groups[GROUP_INCOMPLETE], GROUP_INCOMPLETE,
+            "לא נרשמו תוצאות לא מוכרעות של המנוע; אין בכך כיסוי מלא."),
+        _group_section_html(
+            "review", "פריטים נקודתיים לבדיקה אנושית",
+            "מחוונים שנמצאו בעמוד ודורשים שיקול דעת, כגון משמעות טקסט חלופי או תוכן הצהרת נגישות. אינם כשל מאומת ואינם רשימת הבדיקות הכללית.",
+            groups[GROUP_REVIEW], GROUP_REVIEW,
+            "לא נרשמו פריטים נקודתיים מסוג זה."),
+        _group_section_html(
+            "human", "משימות בדיקה כלליות",
+            "רשימת בדיקות להשלמה, שאינה ראיה לכך שנמצא ליקוי באתר.",
             groups[GROUP_HUMAN], GROUP_HUMAN,
-            "לא נרשמו פריטים לבדיקה אנושית."),
+            "לא נרשמו משימות כלליות."),
+        _group_section_html(
+            "untested", "רשומות בדיקה שלא בוצעה",
+            "תקלות או בדיקות נקודתיות שלא בוצעו. הרשימה אינה כוללת את כל תחומי הנגישות שלא נכללו בסריקה; ראו את הכיסוי בתמצית.",
+            groups[GROUP_UNTESTED], GROUP_UNTESTED,
+            "לא נרשמו רשומות נוספות; אין להסיק מכך שהכול נבדק."),
         _pass_section_html(groups[GROUP_PASS]),
         _comparison_html(report),
         _limitations_html(report),
     ]
+    if not_performed:
+        sections = [_toolbar_html(True), _limitations_html(report)]
 
     disclaimer = report.get("disclaimer") or ""
     version = report.get("version") or ""
@@ -667,7 +726,8 @@ def render_html(report):
 <header class="page">
 <p class="eyebrow" dir="ltr">NEXT IMPACT / ACCESSIBILITY</p>
 <h1>{title}</h1>
-<p>מבינים מה נמצא. בוחרים במה לטפל. ממשיכים עם הסוכן שלכם.</p>
+<p>{scope_intro}</p>
+{summary}
 <details><summary>פרטי הסריקה והכיסוי</summary>{run_meta}</details>
 </header>
 <main>
@@ -690,12 +750,16 @@ def render_html(report):
 """.format(
         title=_esc(TITLE),
         css=_CSS,
+        scope_intro=_esc("היקף הבדיקה: " + str((report.get("scope") or {}).get("target") or "לא צוין") +
+                        (" — העמוד המבוקש לא נבדק" if not_performed else
+                         " — העמוד והמצב המתועדים בלבד" if (report.get("scope") or {}).get("rendered") else
+                         " — ניתוח סטטי של המקור בלבד")),
+        summary=_summary_html(report),
         run_meta=_run_metadata_html(report),
         sections="\n".join(sections),
         disclaimer=_esc(disclaimer),
         version=_esc(version),
         report_json=_json_embed(report),
         repair_pack=_repair_pack_js(),
-        ui_script=_UI_SCRIPT,
+        ui_script="" if not_performed else _UI_SCRIPT,
     )
-

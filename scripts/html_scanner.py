@@ -22,6 +22,7 @@ checks for complete HTML documents and fragments.
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 from bs4.element import Comment, NavigableString, Tag
@@ -80,6 +81,7 @@ VAGUE_LINK_TEXT = {
 GENERIC_ALT = {"image", "img", "picture", "photo", "graphic", "icon", "spacer", "untitled", "placeholder",
                "alt", "תמונה", "אייקון", "צילום", "לוגו"}
 SKIP_LINK_RE = re.compile(r"(skip|jump|דלג|דילוג|לתוכן|לניווט)", re.IGNORECASE)
+STATEMENT_EXPLICIT_RE = re.compile(r"הצהרת\s*נגישות|accessibility[\s_/-]*statement", re.IGNORECASE)
 STATEMENT_RE = re.compile(r"(הצהרת\s*נגישות|accessibility\s*statement|negishut|נגישות|accessibility)",
                           re.IGNORECASE)
 HEBREW_RE = re.compile("[\u0590-\u05FF]")
@@ -672,6 +674,9 @@ def check_headings(ctx):
                                        previous, level),
                                    "Use consecutive heading levels that reflect the content outline."))
         previous = level
+    for item in results:
+        item.update(status="warning", evidence_type="heuristic", wcag_criterion=None,
+                    standards_basis="best-practice")
     return results
 
 
@@ -722,6 +727,9 @@ def check_landmarks(ctx):
                                    "{} navigation landmarks exist and {} of them have no name, so they cannot be "
                                    "told apart.".format(len(navs), len(unnamed)),
                                    "Add aria-label (e.g. \"ניווט ראשי\") to each navigation landmark."))
+    for item in results:
+        if item["id"] in ("bypass-mechanism-not-found", "main-landmark-multiple", "nav-landmarks-unnamed"):
+            item.update(wcag_criterion=None, standards_basis="best-practice")
     return results
 
 
@@ -910,16 +918,25 @@ def check_statement(ctx):
         text = name_text(link)
         href = _attr(link, "href") or ""
         if STATEMENT_RE.search(text) or STATEMENT_RE.search(href):
-            candidates.append((link, text or href))
+            try:
+                parsed = urlsplit(href.strip())
+            except ValueError:
+                parsed = None
+            real_link = bool(href.strip()) and href.strip() != "#" and parsed is not None and parsed.scheme in ("", "http", "https")
+            explicit = bool(STATEMENT_EXPLICIT_RE.search(text) or STATEMENT_EXPLICIT_RE.search(href))
+            toolbar = (_attr(link, "role") == "button" or _has(link, "aria-expanded")
+                       or bool(re.search(r"toolbar|widget|סרגל", text + " " + href, re.IGNORECASE)))
+            rank = 0 if real_link and explicit and not toolbar else 2 if real_link and not toolbar else 3
+            candidates.append((rank, link, text or href))
     for heading in ctx.soup.find_all(re.compile(r"^h[1-6]$")):
         if re.search(r"הצהרת\s*נגישות|accessibility\s*statement", name_text(heading), re.IGNORECASE):
-            candidates.append((heading, name_text(heading)))
+            candidates.append((1, heading, name_text(heading)))
     body = ctx.soup.find("body") or ctx.soup.find("html")
     if candidates:
-        element, text = candidates[0]
+        _, element, text = min(candidates, key=lambda candidate: candidate[0])
         results.append(finding("statement-candidate-found", STATEMENT, "info", "human-review-required",
                                "human-verification-required", None, ctx.loc(element),
-                               "{} candidate(s); first: {} \"{}\"".format(len(candidates), opening_tag(element), text[:80]),
+                               "{} candidate(s); preferred: {} \"{}\"".format(len(candidates), opening_tag(element), text[:80]),
                                "Text or a link mentioning accessibility was found. This is only an indicator: the "
                                "statement content, its location and whether Israeli requirements apply were not "
                                "verified.",

@@ -144,11 +144,31 @@ class ComparisonTests(unittest.TestCase):
                {"findings": [{"id": [], "status": "fail"}]},
                {"findings": [finding(), finding()]},
                {"findings": [finding(location=[]) ]},
-               {"findings": [], "metadata": {"run": []}})
+               {"findings": [], "metadata": {"run": []}},
+               {"findings": [], "metadata": {"run": {"engines": []}}})
         for value in bad:
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     compare_reports(value, self.after)
+
+    def test_rendered_skip_target_requires_same_rule_engine_and_positive_receipt(self):
+        for item in (self.before["findings"][0], self.after["findings"][0]):
+            item.update(engine="rendered-dom", rule_id="skip-link-target-missing")
+        for data in (self.before, self.after):
+            data["metadata"]["run"]["engines"]["rendered-dom"] = "1.0.0"
+        self.assertEqual(len(compare_reports(self.before, self.after)["fixed_verified"]), 1)
+        self.before["metadata"]["run"]["engines"].pop("rendered-dom")
+        self.assertFalse(compare_reports(self.before, self.after)["fixed_verified"])
+        self.before["metadata"]["run"]["engines"]["rendered-dom"] = "1.0.0"
+        self.after["findings"][0]["engine"] = "axe"
+        self.assertFalse(compare_reports(self.before, self.after)["fixed_verified"])
+
+    def test_reduced_rule_coverage_prevents_verified_fix(self):
+        self.before["metadata"]["run"]["rules"] = ["button-name", "label-content-name-mismatch"]
+        self.after["metadata"]["run"]["rules"] = ["button-name"]
+        self.assertFalse(compare_reports(self.before, self.after)["fixed_verified"])
+        self.after["metadata"]["run"]["rules"].append("label-content-name-mismatch")
+        self.assertEqual(len(compare_reports(self.before, self.after)["fixed_verified"]), 1)
 
     def test_does_not_mutate_inputs(self):
         before_copy, after_copy = copy.deepcopy(self.before), copy.deepcopy(self.after)
