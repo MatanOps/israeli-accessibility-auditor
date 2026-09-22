@@ -145,7 +145,7 @@ class BrowserEdgeTests(unittest.TestCase):
         result = self.adapter("/receipts")
         self.assertTrue(result["ok"], result["errors"])
         run = result["run"]
-        self.assertEqual(run["engines"], {"playwright": "1.63.0", "axe": "4.13.0"})
+        self.assertEqual(run["engines"], {"playwright": "1.63.0", "axe": "4.13.0", "rendered-dom": "1.0.0"})
         self.assertEqual(run["pages"], [self.base + "/receipts"])
         self.assertEqual(run["states"], ["initial-render"])
         self.assertEqual(run["original_url"], self.base + "/receipts")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit static frontend source or fetched HTML; never certify accessibility."""
+"""Audit rendered URLs or static frontend source; never certify accessibility."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from report import build_report, write_reports
+from report import VERSION, build_report, write_reports
 
 
 def parser():
@@ -23,7 +23,7 @@ def parser():
     target.add_argument("--path", help="Frontend file or project directory")
     target.add_argument("--url", help="HTTP(S) page rendered with the local browser and axe-core")
     result.add_argument("--format", choices=("markdown", "json"), default="markdown",
-                        help="Console format; both report files are always written")
+                        help="Console format; all three report files are always written")
     result.add_argument("--output", default="accessibility-report", help="Report directory")
     result.add_argument("--static", action="store_true", help="Explicit partial HTML-only URL audit")
     result.add_argument("--prepare", action="store_true", help="Prepare/reuse isolated dependencies automatically")
@@ -64,7 +64,7 @@ def axe_findings(axe, url):
     from report import (finding, ARIA, CONTRAST, FORMS, HEADINGS, IMAGES, KEYBOARD,
                         LANGUAGE, LINKS, STRUCTURE, TABLES)
     results = []
-    for collection, status in (("violations", "fail"), ("incomplete", "human-review-required"), ("passes", "pass")):
+    for collection, collection_status in (("violations", "fail"), ("incomplete", "human-review-required"), ("passes", "pass")):
         rules = axe.get(collection)
         if not isinstance(rules, list):
             raise ValueError("Invalid axe rule collection: " + collection)
@@ -72,8 +72,14 @@ def axe_findings(axe, url):
             if not isinstance(rule, dict) or not isinstance(rule.get("id"), str) or not isinstance(rule.get("nodes"), list):
                 raise ValueError("Invalid axe rule")
             rule_id = rule["id"]
+            tags = rule.get("tags", [])
+            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+                raise ValueError("Invalid axe rule tags")
+            wcag_tags = [tag for tag in tags if tag.startswith("wcag")]
+            best_practice = "best-practice" in tags and not wcag_tags
+            status = "warning" if best_practice and collection_status == "fail" else collection_status
             category = ARIA
-            for words, candidate in ((('color','contrast'), CONTRAST), (('image','alt','video','audio'), IMAGES),
+            for words, candidate in ((('target-size','skip-link'), KEYBOARD), (('color','contrast'), CONTRAST), (('image','alt','video','audio'), IMAGES),
                                      (('label','input','select','form'), FORMS), (('heading',), HEADINGS),
                                      (('link','button'), LINKS), (('table','th-','td-'), TABLES),
                                      (('lang',), LANGUAGE), (('tabindex','focus','keyboard'), KEYBOARD),
@@ -99,17 +105,62 @@ def axe_findings(axe, url):
                     severity = 'moderate'
                 if status == 'pass':
                     severity = 'info'
-                wcag = '; '.join(t for t in rule.get('tags', []) if isinstance(t, str) and t.startswith('wcag'))
+                wcag = '; '.join(wcag_tags)
                 item = finding('axe-' + rule_id, category, severity, status,
-                               'human-verification-required' if status == 'human-review-required' else 'automatically-verified',
+                               'human-verification-required' if status == 'human-review-required' else
+                               'heuristic' if best_practice else 'automatically-verified',
                                wcag or None, location(node), node.get('html') or rule.get('help') or rule_id,
                                (node.get('failureSummary') or rule.get('description') or rule_id) +
                                ' This result covers only the recorded rendered page and state.',
                                rule.get('help') or 'Review the affected element and rerun axe.')
                 item.update(engine='axe', rule_id='axe-' + rule_id,
                             locations=locations if status == 'pass' else [location(node)],
-                            help_url=rule.get('helpUrl', ''), title=rule.get('help') or rule_id)
+                            help_url=rule.get('helpUrl', ''), title=rule.get('help') or rule_id,
+                            axe_tags=tags, standards_basis='best-practice' if best_practice else
+                            'WCAG' if wcag_tags else 'other')
                 results.append(item)
+    return results
+
+
+
+def rendered_supplement(scanned, axe_results, url):
+    """Add only evidence not already represented by the rendered axe run."""
+    from html_scanner import scan_html
+    from report import HEBREW, STATEMENT, KEYBOARD, finding
+
+    language_heuristics = {'lang-hebrew-mismatch', 'lang-hebrew-declared-latin-content'}
+    supplement = scan_html(scanned['html'], {'url': url})
+    results = [item for item in supplement
+               if item['category'] in (HEBREW, STATEMENT) or item['id'] in language_heuristics]
+    skip_links = scanned['run'].get('skip_links', [])
+    if not isinstance(skip_links, list):
+        raise ValueError('Invalid rendered skip-link evidence')
+    covered = {loc.get('selector') for item in axe_results
+               if item.get('rule_id') == 'axe-skip-link' and item['status'] in ('fail', 'warning')
+               for loc in item.get('locations', [item['location']])}
+    for link in skip_links:
+        if (not isinstance(link, dict) or not isinstance(link.get('selector'), str)
+                or not isinstance(link.get('fragment'), str)
+                or not isinstance(link.get('href'), str)
+                or not isinstance(link.get('target_exists'), bool)
+                or not isinstance(link.get('html'), str)):
+            raise ValueError('Invalid rendered skip-link entry')
+        if link['selector'] in covered:
+            continue
+        exists = link['target_exists']
+        item = finding('skip-link-target-missing', KEYBOARD, 'info' if exists else 'serious',
+                       'pass' if exists else 'fail',
+                       'automatically-verified', '2.4.1 Bypass Blocks',
+                       {'url': url, 'selector': link['selector']}, link['html'],
+                       'The rendered skip link points to #' + link['fragment'] +
+                       (' and a matching fragment target exists in the recorded document. ' if exists else
+                        ' but no matching fragment target exists in the recorded document. ') +
+                       'Keyboard activation and other bypass mechanisms were not tested.',
+                       'Give the main content the referenced id, or correct the skip-link href; '
+                       'then verify keyboard focus transfer.')
+        item.update(engine='rendered-dom', rule_id='skip-link-target-missing',
+                    standards_basis='WCAG', locations=[item['location']])
+        results.append(item)
     return results
 
 
@@ -122,7 +173,7 @@ def fetch_html(url):
     if parsed.username or parsed.password:
         raise ValueError("Do not include credentials in audit URLs")
     with requests.get(url, timeout=(5, 15), stream=True,
-                      headers={"User-Agent": "israeli-accessibility-auditor/0.1.0"}) as response:
+                      headers={"User-Agent": "israeli-accessibility-auditor/" + VERSION}) as response:
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "").lower()
         mime_type = content_type.split(";", 1)[0].strip()
@@ -188,21 +239,21 @@ def main(argv=None):
                     files_scanned += 1
                 except (OSError, UnicodeError, ValueError) as exc:
                     errors.append("Could not scan {}: {}".format(filename, exc))
-            run.update(status='partial', pages=list(files), states=['source'], engines={'static':'0.2.0'})
+            run.update(status='partial', pages=list(files), states=['source'], engines={'static': VERSION})
         elif args.static:
             html, final_url = fetch_html(args.url)
             metadata["final_url"] = final_url
             findings.extend(scan_html(html, {"url": final_url}))
             files_scanned = 1
             run.update(status='partial', final_url=final_url, pages=[final_url], states=['static-html'],
-                       engines={'static':'0.2.0'}, attempts=1)
+                       engines={'static': VERSION}, attempts=1)
         else:
             selectors = []
             if baseline:
                 for item in baseline['findings']:
                     if not isinstance(item, dict):
                         raise ValueError("Invalid baseline finding")
-                    if item.get('engine') != 'axe' or item.get('status') not in ('fail', 'warning'):
+                    if item.get('engine') not in ('axe', 'rendered-dom') or item.get('status') not in ('fail', 'warning'):
                         continue
                     for loc in item.get('locations') or [item.get('location', {})]:
                         if isinstance(loc, dict) and isinstance(loc.get('selector'), str):
@@ -212,9 +263,7 @@ def main(argv=None):
             errors.extend(str(e) for e in scanned['errors'])
             if scanned['ok']:
                 findings.extend(axe_findings(scanned['axe'], run.get('final_url') or args.url))
-                from report import HEBREW, LANGUAGE, STATEMENT
-                supplement = scan_html(scanned['html'], {'url': run.get('final_url') or args.url})
-                findings.extend(f for f in supplement if f['category'] in (HEBREW, LANGUAGE, STATEMENT))
+                findings.extend(rendered_supplement(scanned, findings, run.get('final_url') or args.url))
                 files_scanned = 1
                 metadata['rendered'] = True
                 metadata['final_url'] = run.get('final_url')
@@ -237,7 +286,9 @@ def main(argv=None):
             errors.append('Baseline comparison failed: ' + str(exc))
             result['errors'] = list(errors)
             result['summary']['operational_errors'] = len(errors)
-            result['metadata']['run']['status'] = 'partial'
+            comparison_status = 'partial' if files_scanned else 'not-performed'
+            result['metadata']['run']['status'] = comparison_status
+            result['summary']['run_status'] = comparison_status
     try:
         write_reports(result, args.output)
     except OSError as exc:

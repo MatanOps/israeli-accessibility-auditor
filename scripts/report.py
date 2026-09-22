@@ -21,7 +21,7 @@ import os
 import re
 from collections import OrderedDict
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 # The 14 report categories, in display order. Scanners import these names.
 IMAGES = "Images and media"
@@ -87,7 +87,7 @@ def finding(rule_id, category, severity, status, evidence_type, wcag_criterion, 
 _HUMAN_CHECKS = (
     ("human-keyboard-operation", "2.1.1 Keyboard; 2.1.2 No Keyboard Trap; 2.4.3 Focus Order; 2.4.7 Focus Visible",
      "Keyboard operation, focus order, visible focus and keyboard traps",
-     "Static scanning cannot operate the page. Tab through every interactive control, including dialogs, "
+     "The automated audit does not exercise complete user journeys. Tab through every interactive control, including dialogs, "
      "menus, carousels and SPA route changes, and confirm focus is visible, ordered logically and never trapped.",
      "Fix any control that cannot be reached or operated with the keyboard, and manage focus on dynamic changes."),
     ("human-screen-reader", "4.1.2 Name, Role, Value; 3.3.1 Error Identification; 4.1.3 Status Messages",
@@ -134,6 +134,7 @@ def human_checks(location):
         results.append(finding(rule_id, HUMAN, "info", "human-review-required",
                                "human-verification-required", wcag, location, evidence,
                                explanation, remediation))
+        results[-1]["engine"] = "manual-checklist"
     return results
 
 
@@ -147,7 +148,12 @@ def _report_location(target, mode):
     return {"file": target, "line": None}
 
 
-def _limitations(mode, files_scanned, rendered=False):
+def _limitations(mode, files_scanned, rendered=False, not_performed=False):
+    if not_performed:
+        return ["The requested page was not audited. A blocked, unavailable or unready response is not a valid "
+                "accessibility result for the target. No site findings or passes are reported.",
+                "Resolve the recorded readiness or operational issue using authorized access and rerun. "
+                "There is no evidence of accessibility conformance from this run."]
     items = [
         "Static analysis only: JavaScript was not executed and nothing was rendered. Runtime-injected content, "
         "single-page-application routes, dialogs, menus, validation messages and authenticated states were not tested.",
@@ -163,6 +169,10 @@ def _limitations(mode, files_scanned, rendered=False):
         items[0] = ("Playwright rendered one page and axe-core tested the recorded initial state. "
                     "No keyboard journeys, authenticated states, dialogs opened by users, or screen-reader "
                     "interactions were tested. Zero findings is not accessibility approval.")
+        items[1] = ("A pass applies only to the recorded rule and state. Absence of automated findings is not "
+                    "evidence of WCAG conformance, IS 5568 conformance or legal compliance.")
+        items[2] = ("Rendered contrast checks cover only combinations axe-core can resolve in the recorded state. "
+                    "Unresolved cases and hover, focus, validation and other states still require verification.")
         items.append("The browser loaded resources required by the target page; axe-core itself was loaded locally.")
     if mode == "url" and not rendered:
         items.append("Only the single HTTP response returned for the supplied URL (after redirects) was examined. "
@@ -192,7 +202,11 @@ def _unique_ids(findings):
 def build_report(target, mode, findings, files_scanned, errors, metadata):
     """Assemble the final report dictionary from scanner findings."""
     location = _report_location(target, mode)
-    findings = [dict(item) for item in findings]
+    run = dict((metadata or {}).get("run") or {})
+    not_performed = run.get("status") == "not-performed"
+    findings = [] if not_performed else [dict(item) for item in findings]
+    if not_performed:
+        files_scanned = 0
     errors = list(errors or [])
     for index, error in enumerate(errors, 1):
         findings.append(finding(
@@ -201,18 +215,21 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
             "An operational error interrupted the audit, so the affected scope has no automated result. "
             "This is incomplete coverage, never a clean result.",
             "Resolve the error (path, network, dependency or file encoding) and rerun the audit."))
-    findings.extend(human_checks(location))
+    if not not_performed:
+        findings.extend(human_checks(location))
     findings.sort(key=lambda item: (CATEGORIES.index(item["category"]),
                                     _STATUS_ORDER.get(item["status"], 9),
                                     _SEVERITY_ORDER.get(item["severity"], 9)))
     for item in findings:
+        if item.get("standards_basis") == "best-practice" and item["status"] in ACTIONABLE:
+            item["status"] = "warning"
+            item["evidence_type"] = "heuristic"
         item.setdefault("engine", "static")
         item.setdefault("rule_id", item["id"])
         item.setdefault("locations", [item["location"]])
         identity = json.dumps([item["engine"], item["rule_id"], item["location"]], sort_keys=True, ensure_ascii=False)
         item["stable_id"] = "f-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
     _unique_ids(findings)
-    run = dict((metadata or {}).get("run") or {})
     rendered = bool(run.get("rendered"))
 
     actionable = [item for item in findings if item["status"] in ACTIONABLE]
@@ -238,6 +255,15 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
         ("operational_errors", len(errors)),
         ("overall_conformance", "not determined"),
         ("run_status", run.get("status", "partial")),
+        ("automatic_fail_occurrences", sum(item["status"] == "fail" and
+             item["evidence_type"] == "automatically-verified" for item in findings)),
+        ("engine_incomplete_occurrences", sum(item.get("engine") == "axe" and
+             item["status"] == "human-review-required" for item in findings)),
+        ("general_manual_tasks", sum(item["rule_id"].startswith("human-") for item in findings)),
+        ("best_practice_occurrences", sum(item.get("standards_basis") == "best-practice" and
+             item["status"] == "warning" for item in findings)),
+        ("untested_scope", list(run.get("untested") or [])),
+        ("untested_scope_count", len(run.get("untested") or [])),
     ])
     scope = OrderedDict([
         ("target", target),
@@ -250,7 +276,7 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
         ("version", VERSION),
         ("tool", "israeli-accessibility-auditor"),
         ("scope", scope),
-        ("limitations", _limitations(mode, files_scanned, rendered)),
+        ("limitations", _limitations(mode, files_scanned, rendered, not_performed)),
         ("errors", errors),
         ("summary", summary),
         ("metadata", dict(metadata or {})),
@@ -366,9 +392,12 @@ def render_markdown(report):
     for name, count in summary["actionable_by_severity"].items():
         lines.append("| {} | {} |".format(name, count))
     lines.append("")
-    lines.append("- Passed checks (narrow static facts only): {}".format(summary["passed_checks"]))
-    lines.append("- Checks that could not be performed (not-tested): {}".format(summary["not_tested"]))
-    lines.append("- Items requiring human verification: {}".format(summary["human_review_required"]))
+    lines.append("- Passed rule results (not comparable to failure occurrences; no accessibility score): {}".format(summary["passed_checks"]))
+    lines.append("- Automatic failure occurrences: {}".format(summary["automatic_fail_occurrences"]))
+    lines.append("- Engine-incomplete occurrences: {}".format(summary["engine_incomplete_occurrences"]))
+    lines.append("- General manual tasks (not observed failures): {}".format(summary["general_manual_tasks"]))
+    lines.append("- Explicit not-tested records: {} (zero never means complete coverage)".format(summary["not_tested"]))
+    lines.append("- Omitted scope: " + _text("; ".join(summary["untested_scope"]) or "not recorded; complete coverage is not established"))
     lines.append("- Operational errors: {}".format(summary["operational_errors"]))
     lines.append("")
     lines.append("## Required manual checks")
