@@ -2,19 +2,31 @@
 
 כלי קהילתי מבית **Next Impact** לבדיקה אוטומטית ראשונית של נגישות ולהכנת משימות אימות ותיקון. בודקים כתובת אתר או תיקיית קוד, מקבלים דוח HTML עצמאי בעברית ובוחרים מה להעביר לסוכן הקוד. הכלי אינו אישור נגישות ואינו מתקן אתרים אוטומטית.
 
-## התקנה
+## התקנה חד־פעמית לכל הפרויקטים
 
-בתיקיית העבודה של Codex או Claude Code, עם גישה לקבצים ולטרמינל:
+לשימוש גם בשיחות חדשות ובפרויקטים אחרים, מתקינים פעם אחת ברמת המשתמש. אם עובדים עם Codex ועם Claude Code:
 
 ```bash
-npx skills add MatanOps/israeli-accessibility-auditor
+npx skills add MatanOps/israeli-accessibility-auditor --global --agent codex claude-code --yes
 ```
 
-הפקודה מתקינה את ה-Skill. בהרצה הראשונה הסוכן מכין בנפרד סביבת סריקה מבודדת ומוריד את התלויות ואת Chromium; בהרצות הבאות משתמשים בהם מחדש. נדרשים מראש Python 3.9+ ו-Node.js 20+/npm וגישה להורדות הראשוניות. אין התקנת רכיבי מערכת ב-sudo. המסלול נבדק ב-macOS וב-Ubuntu עם Python 3.12 ו-Node 22.
+להתקנה בסוכן אחד בלבד:
+
+```bash
+# Codex
+npx skills add MatanOps/israeli-accessibility-auditor --global --agent codex --yes
+
+# Claude Code
+npx skills add MatanOps/israeli-accessibility-auditor --global --agent claude-code --yes
+```
+
+הדגל `--global` חשוב: בלעדיו, הרצה מתוך ריפו מתקינה את ה-Skill רק באותו פרויקט. לאחר ההתקנה פתחו שיחה חדשה; אין צורך להתקין שוב בפרויקט אחר.
+
+בהרצה הראשונה הסוכן מכין בנפרד סביבת סריקה מבודדת ומוריד את התלויות ואת Chromium; בהרצות הבאות משתמשים בהם מחדש. נדרשים מראש Python 3.9+ ו-Node.js 20+/npm וגישה להורדות הראשוניות. אין התקנת רכיבי מערכת ב-sudo. המסלול נבדק ב-macOS וב-Ubuntu עם Python 3.12 ו-Node 22.
 
 ## בקשת סריקה לסוכן
 
-> השתמש ב-israeli-accessibility-auditor לבדיקת [כתובת האתר או תיקיית הקוד]. הכן אוטומטית את הסביבה ופתח דוח HTML בעברית. הסבר מה נבדק, מה נמצא ומה עדיין דורש אימות. בצע בדיקה בלבד, ללא שינוי באתר.
+> בדוק את [כתובת האתר או תיקיית הקוד] עם israeli-accessibility-auditor. בצע בדיקה בלבד, ללא שינוי באתר.
 
 ## מהדוח לבקשת תיקון — שלושה צעדים
 
