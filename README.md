@@ -1,6 +1,6 @@
 # Israeli Accessibility Auditor
 
-כלי קהילתי מבית **Next Impact** לבדיקת נגישות ראשונית: מקבלים דוח בעברית ובוחרים אילו ממצאים להעביר לתיקון.
+כלי קהילתי לבדיקת נגישות ראשונית: מקבלים דוח בעברית ובוחרים אילו ממצאים להעביר לתיקון.
 
 ## 1. מעתיקים ומבקשים בדיקה
 
@@ -133,5 +133,3 @@ python3 scripts/audit.py --prepare --path tests/fixtures/inaccessible-hebrew.htm
 ## רישיון
 
 קוד הפרויקט מופץ ברישיון MIT. הודעות זכויות היוצרים ורישיונות רכיבי הצד השלישי נשמרים ב־[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-יוזמה קהילתית של **[Next Impact](https://nextimpact.co.il)**.

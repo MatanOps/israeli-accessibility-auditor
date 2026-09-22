@@ -47,4 +47,4 @@ To compare against an earlier JSON report, use the same target and `--baseline /
 
 Technical assistance only; no accessibility certificate, legal advice or warranty of compliance. Automated tools detect some barriers. Human, assistive-technology and real-user testing remain necessary. Laws and standards may change; the user remains responsible for professional and legal review. Full terms: [DISCLAIMER.md](DISCLAIMER.md). Attribution: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Describe the tool as a community initiative by Next Impact, with at most one unobtrusive link to https://nextimpact.co.il in the handoff. Keep the findings and next actions central.
+In the handoff summary, group findings by rule or type rather than listing every occurrence, keep `fail` and `warning` results clearly separate from human-review and `pass` items, and never claim full-site coverage. Keep the findings and next actions central.

@@ -46,7 +46,10 @@ class ReportReliabilityTests(unittest.TestCase):
         self.assertIn('id="group-human"', html)
         self.assertIn("תחומים שלא נכללו בסריקה", html)
         self.assertNotIn("לא נבדק: 0", html)
-        self.assertLess(html.index("מופעי כשל אוטומטי: 1"), html.index("<main>"))
+        self.assertLess(html.index("סוגי בעיות"), html.index("<main>"))
+        self.assertIn('<strong class="metric-value">1</strong><span class="metric-label">סוגי בעיות</span>', html)
+        self.assertIn('<strong class="metric-value">0</strong><span class="metric-label">המלצות לבדיקה</span>', html)
+        self.assertIn('<strong class="metric-value">8</strong><span class="metric-label">נושאים לבדיקה אנושית</span>', html)
         self.assertIn("zero never means complete coverage", render_markdown(report))
 
     def test_best_practice_is_not_a_verified_wcag_failure(self):
@@ -78,10 +81,12 @@ class ReportReliabilityTests(unittest.TestCase):
         report = report_for([item])
         html = render_html(report)
         incomplete = html.split('id="group-incomplete"')[1].split("</section>")[0]
-        recommendations = html.split('id="group-best-practice"')[1].split("</section>")[0]
+        recommendations = html.split('id="recommendations"')[1].split('id="human-review"')[0]
         self.assertIn("axe-landmark-one-main", incomplete)
         self.assertNotIn("axe-landmark-one-main", recommendations)
-        self.assertIn("מופעים שהמנוע לא הכריע בהם: 1", html)
+        self.assertNotIn('id="group-best-practice"', html)
+        self.assertIn('<strong class="metric-value">0</strong><span class="metric-label">המלצות לבדיקה</span>', html)
+        self.assertIn('<strong class="metric-value">8</strong><span class="metric-label">נושאים לבדיקה אנושית</span>', html)
         self.assertEqual(report["summary"]["engine_incomplete_occurrences"], 1)
         self.assertEqual(report["summary"]["best_practice_occurrences"], 0)
 

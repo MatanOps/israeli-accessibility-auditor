@@ -17,7 +17,9 @@ Design constraints honoured here:
   and JavaScript implementations can be compared byte for byte in tests.
 * Every Hebrew or fixed string lives in one table (``_TEXTS``) that is also
   injected into the JavaScript, so the two implementations cannot drift apart
-  textually.
+  textually. The packet disclaimer always comes from this table (preferring
+  the canonical Hebrew ``DISCLAIMER`` from ``report.py`` when available); a
+  disclaimer carried inside a saved report is never echoed into the packet.
 * Site-derived values (evidence, selectors, URLs) are untrusted data: prose is
   Markdown-escaped, identifiers become neutralised inline code, and evidence
   is fenced with a fence longer than any backtick run it contains. The packet
@@ -41,7 +43,7 @@ _LIST_CAP = 10  # maximum entries shown per metadata or location list
 # ---------------------------------------------------------------------------
 
 _TEXTS = {
-    "title": "# Next Impact — חבילת תיקון נגישות",
+    "title": "# Israeli Accessibility Auditor — בקשת תיקון נגישות",
     "h_action": "## בקשת פעולה לסוכן המקבל",
     "action": [
         "אמת/י רק את הממצאים שנבחרו בחבילה זו מול המצב הנוכחי של הפרויקט; אין להרחיב את ההיקף.",
@@ -132,6 +134,24 @@ _TEXTS = {
     "no": "לא",
     "not_performed": "העמוד המבוקש לא נבדק. אין ליצור חבילת תיקון מריצה שלא בוצעה; הסדירו גישה מורשית והריצו שוב.",
 }
+
+# The packet disclaimer is always the tool's own Hebrew text. A saved report
+# may carry an outdated (e.g. legacy English) disclaimer, and report content
+# is untrusted input, so it is never echoed as the packet disclaimer. When
+# report.py exposes the canonical Hebrew DISCLAIMER, adopt it here at import
+# time: the resolved string lands in ``_TEXTS`` before ``browser_script()``
+# serialises the table, so Python and JavaScript stay byte-identical. This
+# import is not circular: report.py only imports html_report lazily and never
+# imports this module.
+try:
+    from report import DISCLAIMER as _CANONICAL_DISCLAIMER
+except Exception:
+    _CANONICAL_DISCLAIMER = None
+
+_HEBREW_CHARS = re.compile("[\\u0590-\\u05FF]")
+
+if isinstance(_CANONICAL_DISCLAIMER, str) and _HEBREW_CHARS.search(_CANONICAL_DISCLAIMER):
+    _TEXTS["default_disc"] = " ".join(_CANONICAL_DISCLAIMER.split())
 
 # ---------------------------------------------------------------------------
 # Escaping helpers. The JavaScript twin mirrors each helper exactly.
@@ -471,8 +491,9 @@ def build_packet(report, selected_ids):
     add("")
     add(T["h_disc"])
     add("")
-    disclaimer = _esc_text(rep.get("disclaimer"))
-    add(disclaimer if disclaimer != "" else T["default_disc"])
+    # Always the tool's own Hebrew disclaimer; a report-supplied disclaimer is
+    # untrusted input and may be an outdated legacy English text.
+    add(T["default_disc"])
     add("")
     return "\n".join(lines)
 
@@ -818,8 +839,7 @@ _JS_TEMPLATE = r"""(function () {
     add("");
     add(T.h_disc);
     add("");
-    var disclaimer = escText(rep.disclaimer);
-    add(disclaimer !== "" ? disclaimer : T.default_disc);
+    add(T.default_disc);
     add("");
     return lines.join("\n");
   }

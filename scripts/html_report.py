@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import json
 from collections import OrderedDict
+from report import DISCLAIMER, grouped_counts
 
 try:
     from repair_packet import browser_script
@@ -24,7 +25,7 @@ except ImportError:  # The packet module may not exist yet; the page degrades.
 
 __all__ = ["render_html"]
 
-TITLE = "Next Impact — בדיקת נגישות ותיקונים"
+TITLE = "Israeli Accessibility Auditor"
 
 # Display groups. Every finding lands in exactly one of the three action
 # groups, except "pass" which is shown separately and quietly.
@@ -215,18 +216,18 @@ def _rule_card_html(rule_key, items, group):
     first = items[0]
     explanation = str(first.get("explanation") or "")
     remediation = str(first.get("remediation") or "")
-    count_note = ' <span class="count">({} מופעים)</span>'.format(len(items)) if len(items) > 1 else ""
+    count_note = ' <span class="count">{}</span>'.format(
+        "מופע אחד" if len(items) == 1 else "{} מופעים".format(len(items)))
     lines = ['<article class="rule rule-{}">'.format(_esc(group))]
     from hebrew import finding_copy
     copy = finding_copy(first)
     lines.append('<h3>{}{}</h3>'.format(_esc(copy['title']), count_note))
-    lines.append('<p class="prose"><strong>השפעה על המשתמש:</strong> {}</p>'.format(_esc(copy['impact'])))
-    lines.append('<p class="prose"><strong>מה מוצע לעשות:</strong> {}</p>'.format(_esc(copy['action'])))
+    lines.append('<p class="prose">{}</p>'.format(_esc(copy['impact'])))
     if group not in (GROUP_PASS, GROUP_UNTESTED) and any(_identity(item) for item in items):
         action = "הכנת בקשה לתיקון זה" if group == GROUP_VERIFIED else "הכנת בקשה לבדיקה זו"
         lines.append('<button type="button" class="rule-packet">{}</button>'.format(action))
-        lines.append('<p class="section-note">הבקשה תכלול רק את המופעים בכרטיס הזה ותחליף בחירה קודמת.</p>')
-    lines.append('<details><summary>הסבר טכני של הכלל</summary>')
+    lines.append('<details class="fix-details"><summary>איך מתקנים?</summary><p>{}</p></details>'.format(_esc(copy['action'])))
+    lines.append('<details><summary>מידע טכני למי שמתקן</summary>')
     lines.append('<p><code dir="ltr">{}</code></p>'.format(_esc(rule_key)))
     if first.get("category"):
         lines.append('<p class="meta">קטגוריה: <span lang="en" dir="ltr">{}</span></p>'.format(_esc(first["category"])))
@@ -234,7 +235,7 @@ def _rule_card_html(rule_key, items, group):
         lines.append('<p class="prose" lang="en" dir="ltr">{}</p>'.format(_esc(explanation)))
     if remediation:
         lines.append('<p class="prose" lang="en" dir="ltr">{}</p>'.format(_esc(remediation)))
-    lines.append('</details><details class="occurrence-details"><summary>בחירת מופעים ומיקומים ({})</summary><ol class="occurrences">'.format(len(items)))
+    lines.append('</details><details class="occurrence-details"><summary>איפה זה מופיע? ({})</summary><ol class="occurrences">'.format(len(items)))
     for item in items:
         lines.append(_occurrence_html(item, group, explanation, remediation))
     lines.append("</ol></details></article>")
@@ -242,30 +243,27 @@ def _rule_card_html(rule_key, items, group):
 
 
 def _group_section_html(section_id, heading, description, grouped, group, empty_text):
-    total = sum(len(items) for items in grouped.values())
-    lines = ['<section id="group-{}" aria-labelledby="{}-h">'.format(_esc(group), section_id)]
-    lines.append('<h2 id="{}-h">{} ({})</h2>'.format(section_id, _esc(heading), total))
+    lines = ['<section id="group-{}" aria-labelledby="{}-h">'.format(_esc(section_id), section_id)]
+    lines.append('<h2 id="{}-h">{}</h2>'.format(section_id, _esc(heading)))
     lines.append('<p class="section-note">{}</p>'.format(_esc(description)))
     if not grouped:
         lines.append('<p class="empty">{}</p>'.format(_esc(empty_text)))
     for rule_key, items in grouped.items():
-        lines.append(_rule_card_html(rule_key, items, group))
+        lines.append(_rule_card_html(_rule_key(items[0]), items, group))
     lines.append("</section>")
     return "\n".join(lines)
 
 
 def _pass_section_html(grouped):
     total = sum(len(items) for items in grouped.values())
-    lines = ['<section id="group-pass" aria-labelledby="pass-h">']
-    lines.append('<h2 id="pass-h">בדיקות שעברו ({})</h2>'.format(total))
-    lines.append('<p class="section-note">כל מעבר מעיד רק על העובדה הצרה שנבדקה; אין בכך עמידה בתקן.</p>')
+    lines = ['<details id="group-pass"><summary>בדיקות שעברו ({})</summary>'.format(total)]
+    lines.append('<p class="section-note">כל מעבר מתייחס רק לבדיקה המסוימת הזו, ואינו אישור נגישות לאתר.</p>')
     if not grouped:
-        lines.append('<p class="empty">לא נרשמו בדיקות שעברו.</p></section>')
+        lines.append('<p class="empty">לא נרשמו בדיקות שעברו.</p></details>')
         return "\n".join(lines)
-    lines.append("<details><summary>הצגת הבדיקות שעברו</summary>")
     for rule_key, items in grouped.items():
-        lines.append(_rule_card_html(rule_key, items, GROUP_PASS))
-    lines.append("</details></section>")
+        lines.append(_rule_card_html(_rule_key(items[0]), items, GROUP_PASS))
+    lines.append("</details>")
     return "\n".join(lines)
 
 
@@ -307,42 +305,33 @@ def _run_metadata_html(report):
 
 
 def _summary_html(report):
-    summary = report.get("summary") or {}
-    findings = report.get("findings") or []
-    totals = {group: sum(_classify(item) == group for item in findings) for group in
-              (GROUP_VERIFIED, GROUP_INCOMPLETE, GROUP_HUMAN, GROUP_BEST_PRACTICE, GROUP_HEURISTIC, GROUP_REVIEW)}
-    chips = []
-    for group, label in ((GROUP_VERIFIED, "מופעי כשל אוטומטי"),
-                         (GROUP_INCOMPLETE, "מופעים שהמנוע לא הכריע בהם"),
-                         (GROUP_HUMAN, "משימות בדיקה כלליות"),
-                         (GROUP_REVIEW, "פריטים נקודתיים לבדיקה אנושית"),
-                         (GROUP_BEST_PRACTICE, "המלצות לשיפור"),
-                         (GROUP_HEURISTIC, "חשדות לאימות")):
-        chips.append(_badge("badge-plain", "{}: {}".format(label, totals[group])))
-    chips.append(_badge("badge-plain", "שגיאות תפעוליות: {}".format(
-        summary.get("operational_errors", 0))))
-    run = report.get("metadata", {}).get("run", {})
+    run = (report.get("metadata") or {}).get("run") or {}
     state = run.get("status", "partial")
-    next_step = ("הבדיקה האוטומטית הושלמה לעמוד ולמצב המתועדים. בחרו ממצאים לאימות והמשיכו לבדיקות האנושיות."
-                 if state == "completed" else "זו בדיקה חלקית. אמתו את החשדות בדפדפן לפני שינוי קוד."
-                 if state == "partial" else "העמוד המבוקש לא נבדק. פתרו את סיבת העצירה והריצו שוב; אין כאן תוצאת נגישות של האתר.")
-    untested = run.get("untested") or []
-    scope_text = ("תחומים שלא נכללו בסריקה: " + "; ".join(str(item) for item in untested)
-                  if untested else "תחומים שלא נכללו בסריקה: לא תועדו; אין להסיק מכך שהכול נבדק.")
     if state == "not-performed":
         readiness = run.get("readiness") or {}
         reason = readiness.get("reason") if isinstance(readiness, dict) else None
-        reason = reason or "; ".join(str(error) for error in report.get("errors") or []) or "העמוד לא היה זמין לבדיקה תקפה."
-        next_step += " סיבה: " + str(reason)
-        if isinstance(readiness, dict) and readiness.get("next_step"):
-            next_step += " הצעד הבא: " + str(readiness["next_step"])
-        chips = []
-    return ('<section aria-labelledby="summary-h"><h2 id="summary-h">תמצית</h2>'
-            '<p>{}</p><p class="badges">{}</p><p>{}</p>'
-            '<p>הספירות מתארות סוגי תוצאות שונים; הן אינן ציון נגישות.</p>'
-            '<p class="section-note">היעדר ממצאים אוטומטיים לעולם אינו מהווה '
-            'עמידה בתקן או בדין; רמת ההתאמה אינה נקבעת על ידי הכלי.</p>'
-            "</section>").format(_esc(next_step), " ".join(chips), _esc(scope_text))
+        reason = reason or "; ".join(str(error) for error in report.get("errors") or []) or "העמוד לא היה זמין לבדיקה."
+        next_step = readiness.get("next_step") if isinstance(readiness, dict) else None
+        return '<section><h2>העמוד המבוקש לא נבדק</h2><p>{}</p><p>{}</p></section>'.format(
+            _esc(reason), _esc(next_step or "הסדירו גישה לעמוד והריצו את הבדיקה שוב."))
+    counts = grouped_counts(report.get("findings") or [])
+    metrics = []
+    for key, label in (("problem", "סוגי בעיות"), ("recommendation", "המלצות לבדיקה"),
+                       ("review", "נושאים לבדיקה אנושית")):
+        detail = ("{} מופעים".format(counts[key + "_occurrences"]) if key != "review"
+                  else "להשלמה עם בודק או מתחזק האתר")
+        metrics.append('<div class="metric"><strong class="metric-value">{}</strong>'
+                       '<span class="metric-label">{}</span><span class="metric-detail">{}</span></div>'.format(
+                           counts[key + "_types"], label, detail))
+    note = ("הבדיקה הושלמה לעמוד ולמצב המתועדים בלבד."
+            if state == "completed" else "הבדיקה חלקית — פרטי הכיסוי מופיעים בהמשך.")
+    errors = report.get("errors") or []
+    if errors:
+        note += " חלק מהבדיקות נתקלו בתקלה; ראו פרטי הסריקה."
+    return ('<section aria-labelledby="summary-h"><h2 id="summary-h" class="sr-only">סיכום הבדיקה</h2>'
+            '<div class="metrics">{}</div><p class="section-note">{} '
+            'בעיה שחוזרת בכמה מקומות מופיעה כאן פעם אחת. זה אינו אישור נגישות לאתר.</p></section>').format(
+                "".join(metrics), _esc(note))
 
 
 def _limitations_html(report):
@@ -379,119 +368,105 @@ def _comparison_html(report):
 def _toolbar_html(not_performed=False):
     if not_performed:
         return '<section><h2>מה עושים עכשיו?</h2><p>העמוד המבוקש לא נבדק. אין ממצאי אתר תקפים לבחירה ואין חבילת תיקון. הסדירו גישה מורשית לעמוד או בדקו עותק מקומי, ואז הריצו שוב.</p></section>'
-    return """<section aria-labelledby="actions-h">
-<h2 id="actions-h">מתקדמים מהדוח לתיקון</h2>
-<ol class="next-steps">
-<li><strong>מכינים בקשה</strong><span>לחצו על הכנת בקשה בכרטיס של ממצא, או בחרו כאן את כל הליקויים המאומתים.</span></li>
-<li><strong>מעתיקים לסוכן</strong><span>קראו את הבקשה שתופיע והדביקו אותה ב־Codex או Claude Code בפרויקט האתר.</span></li>
-<li><strong>מתקנים ובודקים שוב</strong><span>הבקשה מנחה את הסוכן לאמת, לתקן ולבדוק מחדש. פריט לא מוכרע נשלח לבדיקה תחילה.</span></li>
-</ol>
-<p class="handoff-note">הכפתורים מכינים בקשה בלבד. לביצוע נדרשת גישה לפרויקט או למערכת הניהול של האתר, כגון WordPress/Elementor. אפשר להעביר את הבקשה גם למתחזק האתר.</p>
+    return """<section class="actions" aria-labelledby="actions-h">
+<h2 id="actions-h">מה עושים עכשיו?</h2>
+<p>לחצו על בקשת תיקון ליד בעיה, והעתיקו אותה לסוכן בפרויקט האתר או שלחו למי שמתחזק אותו.</p>
+<button type="button" id="select-verified">הכנת בקשה לכל הבעיות המאומתות</button>
+<details id="selection-tools"><summary>בחירה ידנית ופעולות נוספות</summary>
 <div class="toolbar" role="group" aria-label="פעולות על הממצאים שנבחרו">
-<button type="button" id="select-verified">בחירת כל הליקויים המאומתים</button>
 <button type="button" id="preview-selected">הצגת הבקשה שנבחרה</button>
 <button type="button" id="copy-selected">העתקת בקשה ל־Codex / Claude</button>
 <button type="button" id="download-selected">הורדת קובץ לצירוף לסוכן</button>
 <button type="button" id="clear-selected">ניקוי הבחירה</button>
 <span id="selected-count">נבחרו 0 ממצאים</span>
-</div>
+</div></details>
 <p id="packet-status" role="status"></p>
-<p id="packet-next" class="handoff-note" hidden><strong>הבקשה מוכנה.</strong> העתיקו אותה לשיחה ב־Codex או Claude Code בפרויקט האתר, או הורידו ושלחו את הקובץ למתחזק. היא כוללת את הממצאים שנבחרו, המיקומים, הוראות התיקון והבדיקה החוזרת.</p>
+<p id="packet-next" class="handoff-note" hidden><strong>הבקשה מוכנה.</strong> הדביקו אותה ב־Codex או Claude Code בפרויקט האתר, או שלחו למתחזק. התיקון יתבצע בפרויקט ולא מתוך הדוח.</p>
 <div id="packet-fallback" hidden>
-<label for="packet-text">הבקשה לסוכן — מוכנה לקריאה ולהעתקה:</label>
-<textarea id="packet-text" rows="12" readonly spellcheck="false" dir="auto" aria-describedby="packet-next"></textarea>
+<label for="packet-text">בקשת התיקון — לקריאה ולהעתקה:</label>
+<textarea id="packet-text" rows="10" readonly spellcheck="false" dir="auto" aria-describedby="packet-next"></textarea>
 <div class="toolbar" role="group" aria-label="העברת הבקשה לסוכן">
 <button type="button" id="copy-packet-preview">העתקת הבקשה</button>
 <button type="button" id="download-packet-preview">הורדת הבקשה כקובץ</button>
-</div>
-</div>
+</div></div>
 </section>"""
 
 
+
 _CSS = """
-:root { color-scheme: light; }
+:root { color-scheme: light; --ink: #070707; --gold: #C89A45; --paper: #EFE6D8; }
 * { box-sizing: border-box; }
-body {
-  margin: 0; background: #f6f6f4; color: #1a1a1a;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.6;
-}
-header.page, main, footer.page { max-width: 62rem; margin-inline: auto; padding: 1rem; }
-header.page { border-block-end: 4px solid #1d4ed8; background: #ffffff; }
-header.page h1 { margin: 0 0 0.5rem; font-size: 1.6rem; }
-main > section { background: #ffffff; border: 1px solid #d9d9d4; border-radius: 0.5rem;
-  padding: 1rem; margin-block: 1rem; }
-h2 { font-size: 1.25rem; margin-block: 0 0.5rem; }
-h3 { font-size: 1.05rem; margin-block: 0 0.25rem; overflow-wrap: anywhere; }
-.section-note, .meta { color: #444444; margin-block: 0.25rem; }
-.empty { color: #444444; font-style: normal; }
-.rule { border: 1px solid #d9d9d4; border-inline-start: 6px solid #6b7280;
-  border-radius: 0.375rem; padding: 0.75rem 1rem; margin-block: 0.75rem; }
-.rule-verified { border-inline-start-color: #b91c1c; }
-.rule-heuristic { border-inline-start-color: #c2620a; }
-.rule-human { border-inline-start-color: #1d4ed8; }
-.rule-pass { border-inline-start-color: #15803d; }
-.occurrences { margin: 0.5rem 0 0; padding-inline-start: 1.25rem; }
-.occurrence { margin-block: 0.75rem; border-block-start: 1px solid #ececea; padding-block-start: 0.5rem; }
-.occurrence:first-child { border-block-start: none; padding-block-start: 0; }
-.pick { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600;
-  padding: 0.25rem; margin: 0; }
-.pick input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem; accent-color: #1d4ed8; }
-.badges { margin-block: 0.25rem; }
-.badge { display: inline-block; border-radius: 0.25rem; padding: 0.1rem 0.5rem;
-  font-size: 0.85rem; margin-inline-end: 0.25rem; background: #e4e4e7; color: #27272a; }
-.badge-verified { background: #fde8e8; color: #7f1d1d; }
-.badge-heuristic { background: #ffedd5; color: #7c2d12; }
-.badge-human { background: #dbeafe; color: #1e3a8a; }
-.badge-pass { background: #dcfce7; color: #14532d; }
-.evidence { background: #f4f4f2; border: 1px solid #d9d9d4; border-radius: 0.25rem;
-  padding: 0.5rem; overflow-x: auto; max-inline-size: 100%; }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.9em; overflow-wrap: anywhere; }
-.prose, .prose-list li { overflow-wrap: anywhere; }
-.locations { margin-block: 0.25rem; }
-.run-meta { margin: 0; }
-.run-meta div { display: flex; flex-wrap: wrap; gap: 0.5rem; padding-block: 0.15rem; }
-.run-meta dt { font-weight: 600; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--paper); color: var(--ink);
+  font-family: Arial, "Noto Sans Hebrew", system-ui, sans-serif; font-size: 17px; line-height: 1.7; }
+header.page, main, footer.page { max-width: 64rem; margin-inline: auto; padding: 1.5rem 2rem; }
+header.page { padding-block-start: 2.5rem; border-block-start: 6px solid var(--gold); }
+h1 { font-size: clamp(1.4rem, 4vw, 2rem); line-height: 1.3; margin: 0; text-align: right; }
+.subtitle { margin: .3rem 0 1rem; font-size: 1.25rem; }
+.scope { margin-block: .5rem 1rem; overflow-wrap: anywhere; }
+h2 { font-size: 1.3rem; line-height: 1.5; margin: 0 0 .5rem; }
+h3 { font-size: 1.15rem; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
+p { margin-block: .5rem .9rem; }
+main { padding-block-start: 0; }
+main > section, main > details { background: #FFFFFF; border: 1px solid #d3cbbb;
+  border-radius: .8rem; padding: 1.5rem; margin-block-end: 1rem; }
+.metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .75rem; margin-block: 1.25rem .75rem; }
+.metric { background: #FFFFFF; border-radius: .6rem; padding: 1rem; display: flex; flex-direction: column; }
+.metric:first-child { border-block-start: 4px solid var(--gold); padding-block-start: calc(1rem - 4px); }
+.metric-value { font-size: 2rem; line-height: 1.2; }
+.metric-label { font-weight: bold; margin-block-start: .4rem; }
+.metric-detail, .section-note, .meta { color: #49443c; font-size: .95rem; }
+.count { display: block; color: #49443c; font-size: .9rem; font-weight: normal; margin-block-start: .2rem; }
+.rule { border-block-start: 1px solid #d3cbbb; padding-block: 1.5rem; }
+.rule:last-child { padding-block-end: 0; }
+.rule .prose { max-width: 48rem; }
+.rule-packet { margin-block: .1rem .7rem; }
+.empty { color: #49443c; }
+.occurrences { padding-inline-start: 1.4rem; }
+.occurrence { border-block-start: 1px solid #d3cbbb; padding-block: 1rem; }
+.pick { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .5rem; font-weight: bold; }
+.pick input { inline-size: 1.4rem; block-size: 1.4rem; accent-color: var(--ink); }
+.badge { display: inline-block; padding: .1rem .5rem; margin: .2rem; background: var(--paper); border-radius: .25rem; font-size: .85rem; }
+.evidence { background: #f7f4ee; padding: .75rem; overflow-x: auto; max-inline-size: 100%; }
+code { font-family: ui-monospace, monospace; font-size: .9em; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.prose, .prose-list li, .run-meta dd, .pick { overflow-wrap: anywhere; }
+.run-meta div { display: flex; flex-wrap: wrap; gap: .5rem; }
+.run-meta dt { font-weight: bold; }
 .run-meta dt::after { content: ":"; }
-.run-meta dd { margin: 0; overflow-wrap: anywhere; }
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
-button {
-  font: inherit; background: #1d4ed8; color: #ffffff; border: 2px solid #1d4ed8;
-  border-radius: 0.375rem; padding: 0.5rem 1rem; min-block-size: 2.75rem; cursor: pointer;
-}
-button:hover { background: #1e40af; border-color: #1e40af; }
-#selected-count { font-weight: 600; }
-#packet-status { min-block-size: 1.5rem; font-weight: 600; color: #14532d; margin-block: 0.5rem; }
-#packet-status.error { color: #7f1d1d; }
-#packet-fallback label { display: block; font-weight: 600; margin-block-end: 0.25rem; }
-#packet-text { inline-size: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-details > summary { cursor: pointer; font-weight: 600; padding: 0.25rem; }
-:focus { outline: 3px solid #1d4ed8; outline-offset: 2px; }
-footer.page { color: #444444; }
-.next-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; padding-inline-start: 1.5rem; }
-.next-steps li { padding-inline: .3rem; }
-.next-steps span { display: block; color: #475569; font-size: .95rem; margin-block-start: .5rem; }
-.handoff-note { background: #eff6ff; border-inline-start: 3px solid #1d4ed8; border-radius: .4rem; padding: .8rem 1rem; }
-header.page { background: #101f38; color: #fff; border: none; border-radius: 0 0 1.5rem 1.5rem; padding: 2rem; }
-header.page .meta, header.page .section-note { color: #e2e8f0; }
-header.page .eyebrow { color: #c7d2fe; font-size: .8rem; letter-spacing: .15em; margin: 0 0 .8rem; }
-header.page details { margin-block-start: 1rem; }
-header.page h1 { font-size: clamp(1.45rem, 4vw, 2.2rem); }
-header.page p { overflow-wrap: anywhere; }
-main > section { border-radius: 1rem; padding: 1.5rem; }
-.rule { border-radius: .7rem; }
-.occurrence-details { margin-block-start: .75rem; }
-#preview-selected, #download-selected, #clear-selected { background: #fff; color: #1d4ed8; }
-#preview-selected:hover, #download-selected:hover, #clear-selected:hover { background: #eff6ff; }
-#packet-next[hidden] { display: none; }
-@media print { .toolbar, .rule-packet, #packet-fallback, #packet-status { display: none; } }
+.run-meta dd { margin: 0; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-block: .6rem; }
+button { font: inherit; font-weight: bold; color: var(--ink); background: var(--gold); border: 2px solid transparent;
+  border-radius: .4rem; padding: .5rem 1rem; min-block-size: 2.75rem; cursor: pointer; }
+button:hover { background: #d6ac61; }
+#selection-tools button, #download-packet-preview { background: #FFFFFF; border-color: #777064; }
+#selection-tools button:hover, #download-packet-preview:hover { background: var(--paper); }
+#packet-status { font-weight: bold; margin: .5rem 0 0; }
+#packet-status:empty { display: none; }
+#packet-status.error { border-inline-start: 4px solid var(--ink); padding-inline-start: .7rem; }
+#packet-fallback label { display: block; font-weight: bold; margin-block-end: .5rem; }
+#packet-text { inline-size: 100%; font: inherit; line-height: 1.7; padding: 1rem; border: 1px solid #777064; border-radius: .4rem; }
+.handoff-note { background: var(--paper); padding: .75rem 1rem; border-radius: .4rem; }
+details > summary { cursor: pointer; padding-block: .4rem; min-block-size: 2.75rem; }
+main > details > summary { font-weight: bold; font-size: 1.1rem; }
+:focus-visible { outline: 3px solid #846122; outline-offset: 3px; }
+footer.page { font-size: .95rem; color: #49443c; padding-block-start: .5rem; }
+footer h2 { font-size: 1rem; }
+.sr-only { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media print { .toolbar, button, #packet-fallback, #packet-status { display: none; } }
 @media (max-width: 40rem) {
-  .next-steps { grid-template-columns: 1fr; }
+  header.page, main, footer.page { padding-inline: 1rem; }
+  header.page { padding-block-start: 1.5rem; }
+  main > section, main > details { padding: 1rem; }
+  .metrics { gap: .5rem; }
+  .metric { padding: .6rem; }
+  .metric:first-child { padding-block-start: calc(.6rem - 4px); }
+  .metric-value { font-size: 1.65rem; }
+  .metric-label, .metric-detail { font-size: .85rem; line-height: 1.4; }
   .toolbar { flex-direction: column; align-items: stretch; }
-  header.page h1 { font-size: 1.3rem; }
+  button { max-inline-size: 100%; }
 }
 """
+
 
 
 # The user-interface script. It parses the embedded JSON into
@@ -527,9 +502,10 @@ _UI_SCRIPT = """
     return ids;
   }
 
-  function updateCount() {
+  function updateCount(showSelectionTools) {
     selectionRevision += 1;
     countEl.textContent = 'נבחרו ' + selectedIds().length + ' ממצאים';
+    if (selectedIds().length) { document.getElementById('selection-tools').open = showSelectionTools !== false; }
     // A changed selection invalidates the previously displayed packet.
     fallbackEl.hidden = true;
     textareaEl.value = '';
@@ -596,7 +572,7 @@ _UI_SCRIPT = """
       document.querySelectorAll('input.finding-select').forEach(function (box) {
         box.checked = card.contains(box);
       });
-      updateCount();
+      updateCount(false);
       previewSelection();
     });
   });
@@ -604,7 +580,7 @@ _UI_SCRIPT = """
   document.getElementById('select-verified').addEventListener('click', function () {
     var boxes = document.querySelectorAll('input.finding-select');
     for (var i = 0; i < boxes.length; i++) { boxes[i].checked = boxes[i].dataset.group === 'verified'; }
-    updateCount();
+    updateCount(false);
     if (selectedIds().length === 0) {
       announce('אין ליקויים מאומתים לבחירה בדוח זה. אפשר להכין בקשה לבדיקה בכרטיסים שדורשים אימות.', false);
       return;
@@ -715,53 +691,49 @@ def render_html(report):
         if not isinstance(item, dict):
             continue
         grouped = groups[_classify(item)]
-        grouped.setdefault(_rule_key(item), []).append(item)
+        grouped.setdefault((str(item.get("engine") or "static"), _rule_key(item)), []).append(item)
 
+    def section(group, heading, description, subset=None, section_id=None):
+        selected = groups[group] if subset is None else subset
+        if not selected:
+            return ""
+        return _group_section_html(section_id or group, heading, description,
+                                   selected, group, "")
+
+    def fold(identity, label, content):
+        return '<details id="{}"><summary>{}</summary>{}</details>'.format(identity, _esc(label), content)
+
+    # Keep suspected failures ahead of warnings without presenting them as verified.
+    suspected_failures = OrderedDict()
+    warnings = OrderedDict()
+    for key, items in groups[GROUP_HEURISTIC].items():
+        failed = [item for item in items if item.get("status") == "fail"]
+        warned = [item for item in items if item.get("status") == "warning"]
+        if failed:
+            suspected_failures[key] = failed
+        if warned:
+            warnings[key] = warned
+    counts = grouped_counts(report.get("findings") or [])
+    recommendations = section(GROUP_HEURISTIC, "המלצות שצריך לאמת", "בדקו אם נדרש שינוי לפני שמתקנים.", warnings)
+    recommendations += section(GROUP_BEST_PRACTICE, "המלצות לשיפור", "שיטות עבודה מומלצות; אינן כשל נגישות מאומת.")
+    human = section(GROUP_INCOMPLETE, "תוצאות שדורשות בדיקה", "הבדיקה האוטומטית לא הצליחה להכריע במקרים האלה.")
+    human += section(GROUP_REVIEW, "נושאים לבדיקה בעמוד", "נדרשת בדיקה של אדם כדי לקבוע אם קיימת בעיה.")
+    human += section(GROUP_HUMAN, "בדיקות נוספות להשלמה", "בדיקות כמו תפעול במקלדת והאזנה בקורא מסך. זו אינה רשימת תקלות שנמצאו.")
     sections = [
         _toolbar_html(not_performed),
-        _group_section_html(
-            "verified", "ליקויים מאומתים אוטומטית",
-            "ממצאים במצב fail שאומתו אוטומטית; אלו המועמדים הראשונים לתיקון.",
-            groups[GROUP_VERIFIED], GROUP_VERIFIED,
-            "לא נמצאו ליקויים מאומתים. היעדר ממצאים אינו מעיד על עמידה בתקן."),
-        _group_section_html(
-            "heuristic", "חשדות שצריך לאמת",
-            "חשדות שדורשים אימות בדף המעובד לפני תיקון; אל תתקנו בעיניים עצומות.",
-            groups[GROUP_HEURISTIC], GROUP_HEURISTIC,
-            "לא נרשמו אזהרות היוריסטיות."),
-        _group_section_html(
-            "best-practice", "המלצות לשיפור לפי שיטות עבודה מומלצות",
-            "אזהרות היוריסטיות נפרדות מכשלי WCAG. יש לאמת את הצורך בשינוי לפני תיקון.",
-            groups[GROUP_BEST_PRACTICE], GROUP_BEST_PRACTICE,
-            "לא נרשמו המלצות מסוג זה."),
-        _group_section_html(
-            "incomplete", "מופעים שהמנוע לא הכריע בהם",
-            "רכיבים מסוימים שנבדקו אך axe-core לא הכריע לגביהם. אלה אינם כשלים מאומתים; נדרש אימות ממוקד.",
-            groups[GROUP_INCOMPLETE], GROUP_INCOMPLETE,
-            "לא נרשמו תוצאות לא מוכרעות של המנוע; אין בכך כיסוי מלא."),
-        _group_section_html(
-            "review", "פריטים נקודתיים לבדיקה אנושית",
-            "מחוונים שנמצאו בעמוד ודורשים שיקול דעת, כגון משמעות טקסט חלופי או תוכן הצהרת נגישות. אינם כשל מאומת ואינם רשימת הבדיקות הכללית.",
-            groups[GROUP_REVIEW], GROUP_REVIEW,
-            "לא נרשמו פריטים נקודתיים מסוג זה."),
-        _group_section_html(
-            "human", "משימות בדיקה כלליות",
-            "רשימת בדיקות להשלמה, שאינה ראיה לכך שנמצא ליקוי באתר.",
-            groups[GROUP_HUMAN], GROUP_HUMAN,
-            "לא נרשמו משימות כלליות."),
-        _group_section_html(
-            "untested", "רשומות בדיקה שלא בוצעה",
-            "תקלות או בדיקות נקודתיות שלא בוצעו. הרשימה אינה כוללת את כל תחומי הנגישות שלא נכללו בסריקה; ראו את הכיסוי בתמצית.",
-            groups[GROUP_UNTESTED], GROUP_UNTESTED,
-            "לא נרשמו רשומות נוספות; אין להסיק מכך שהכול נבדק."),
+        section(GROUP_VERIFIED, "הבעיות שכדאי לתקן קודם", "כל כרטיס מרכז סוג אחד של בעיה שנמצאה בבדיקה האוטומטית."),
+        section(GROUP_HEURISTIC, "בעיות שדורשות אימות לפני תיקון", "הבדיקה זיהתה חשד לבעיה. בקשת התיקון תנחה לאמת אותו תחילה.", suspected_failures, "suspected-failures"),
+        fold("recommendations", "המלצות לבדיקה ({})".format(counts["recommendation_types"]), recommendations or '<p>לא נמצאו המלצות נוספות.</p>'),
+        fold("human-review", "נושאים לבדיקה אנושית ({})".format(counts["review_types"]), human or '<p>לא נרשמו נושאים נוספים.</p>'),
         _pass_section_html(groups[GROUP_PASS]),
         _comparison_html(report),
-        _limitations_html(report),
+        fold("scan-details", "פרטי הסריקה והמגבלות", _run_metadata_html(report) +
+             section(GROUP_UNTESTED, "בדיקות שלא בוצעו", "יש להשלים אותן לפני הסקת מסקנות.") + _limitations_html(report)),
     ]
     if not_performed:
         sections = [_toolbar_html(True), _limitations_html(report)]
 
-    disclaimer = report.get("disclaimer") or ""
+    disclaimer = DISCLAIMER
     version = report.get("version") or ""
 
     return """<!DOCTYPE html>
@@ -774,18 +746,17 @@ def render_html(report):
 </head>
 <body>
 <header class="page">
-<p class="eyebrow" dir="ltr">NEXT IMPACT / ACCESSIBILITY</p>
-<h1>{title}</h1>
-<p>{scope_intro}</p>
+<h1 dir="ltr">{title}</h1>
+<p class="subtitle">בדיקות נגישות ותיקונים</p>
+<p class="scope">{scope_intro}</p>
 {summary}
-<details><summary>פרטי הסריקה והכיסוי</summary>{run_meta}</details>
 </header>
 <main>
 {sections}
 </main>
 <footer class="page">
 <h2>הבהרה והגבלת אחריות</h2>
-<p lang="en" dir="ltr">{disclaimer}</p>
+<p lang="he" dir="rtl">{disclaimer}</p>
 <p>israeli-accessibility-auditor <span dir="ltr">{version}</span></p>
 </footer>
 <script type="application/json" id="audit-report-data">{report_json}</script>
@@ -800,8 +771,9 @@ def render_html(report):
 """.format(
         title=_esc(TITLE),
         css=_CSS,
-        scope_intro=_esc("היקף הבדיקה: " + str((report.get("scope") or {}).get("target") or "לא צוין") +
-                        (" — העמוד המבוקש לא נבדק" if not_performed else
+        scope_intro='היקף הבדיקה: <bdi dir="ltr">{}</bdi>{}'.format(
+            _esc((report.get("scope") or {}).get("target") or "לא צוין"),
+            _esc(" — העמוד המבוקש לא נבדק" if not_performed else
                          " — העמוד והמצב המתועדים בלבד" if (report.get("scope") or {}).get("rendered") else
                          " — ניתוח סטטי של המקור בלבד")),
         summary=_summary_html(report),

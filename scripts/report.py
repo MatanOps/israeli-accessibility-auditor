@@ -199,6 +199,45 @@ def _unique_ids(findings):
     return findings
 
 
+
+def grouped_counts(findings):
+    """Count finding records and distinct (engine, rule_id) types per status.
+
+    An occurrence is one finding record, matching the existing status counts;
+    aggregated pass locations are not expanded into additional occurrences.
+    Missing engine/rule_id fields use the existing static/id defaults for older
+    saved reports. Invalid records are ignored, and input records stay unchanged.
+    """
+    buckets = {
+        "fail": "problem",
+        "warning": "recommendation",
+        "human-review-required": "review",
+        "pass": "pass",
+    }
+    counts = {prefix + suffix: 0 for prefix in buckets.values()
+              for suffix in ("_types", "_occurrences")}
+    identities = {status: set() for status in buckets}
+    if not isinstance(findings, (list, tuple)):
+        return counts
+    for item in findings:
+        if not isinstance(item, dict):
+            continue
+        status = item.get("status")
+        if not isinstance(status, str) or status not in buckets:
+            continue
+        engine = item.get("engine", "static")
+        rule_id = item.get("rule_id", item.get("id"))
+        if (not isinstance(engine, str) or not engine.strip()
+                or not isinstance(rule_id, str) or not rule_id.strip()):
+            continue
+        prefix = buckets[status]
+        counts[prefix + "_occurrences"] += 1
+        identities[status].add((engine, rule_id))
+    for status, types in identities.items():
+        counts[buckets[status] + "_types"] = len(types)
+    return counts
+
+
 def build_report(target, mode, findings, files_scanned, errors, metadata):
     """Assemble the final report dictionary from scanner findings."""
     location = _report_location(target, mode)
@@ -265,6 +304,7 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
         ("untested_scope", list(run.get("untested") or [])),
         ("untested_scope_count", len(run.get("untested") or [])),
     ])
+    summary.update(grouped_counts(findings))
     scope = OrderedDict([
         ("target", target),
         ("mode", mode),
@@ -286,10 +326,11 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
 
 
 DISCLAIMER = (
-    "This report is technical assistance produced by scoped automated checks. It is not an accessibility certificate, "
-    "a legal opinion, proof of compliance with Israeli law or IS 5568, or a substitute for testing with assistive "
-    "technology, real users and a qualified accessibility professional. The Israeli legal baseline (IS 5568 and "
-    "official sources) is distinct from the recommended engineering target, WCAG 2.2 AA."
+    "הדוח נועד לסייע בעבודה מקצועית ומבוסס על בדיקות אוטומטיות בהיקף מוגבל. "
+    "הוא אינו אישור נגישות, חוות דעת משפטית או הוכחה לעמידה בדין הישראלי או בתקן ישראלי 5568. "
+    "הוא גם אינו תחליף לבדיקות בעזרת טכנולוגיות מסייעות, משתמשים ואיש מקצוע מוסמך בתחום הנגישות. "
+    "יש להבחין בין המסגרת המחייבת בישראל, לרבות תקן ישראלי 5568 והמקורות הרשמיים, "
+    "לבין יעד הפיתוח המומלץ: WCAG 2.2 AA."
 )
 
 
