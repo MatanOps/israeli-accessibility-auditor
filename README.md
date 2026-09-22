@@ -1,8 +1,60 @@
 # Israeli Accessibility Auditor
+### כלי בדיקת נגישות מבית Next Impact
 
-A free, MIT-licensed command-line accessibility scanner for frontend source and fetched HTML, with Hebrew and RTL checks. It produces evidence-based Markdown and JSON reports and identifies work requiring human review.
+כלי חינמי וקוד פתוח לזיהוי בעיות נגישות באתרי אינטרנט ובאפליקציות Web, עם דגש על עברית וכתיבה מימין לשמאל. מקבלים דוח מפורט עם ממצאים, הסברים והמלצות לתיקון.
 
-**Partial technical checks, not accessibility certification or legal advice.** The Israeli baseline is SI 5568 and the applicable official Israeli sources; the recommended engineering target is WCAG 2.2 AA. These are separate references. Read [DISCLAIMER.md](DISCLAIMER.md).
+**מיועד לשימוש בעזרת Codex או Claude Code עם גישה לקבצים ולטרמינל.** אין צורך להכיר פקודות Python; סוכן הקוד יכול לבצע עבורכם את ההכנה וההרצה. אם אין לכם סוכן כזה, ההוראות הטכניות מופיעות בהמשך.
+
+> הבדיקות חלקיות: הכלי בודק קוד או HTML של עמוד בודד ואינו מפעיל JavaScript בעצמו. הדוח אינו אישור נגישות או תחליף לבדיקה מקצועית.
+
+## מתחילים בשלושה צעדים
+
+1. פתחו את Codex או Claude Code. לבדיקת פרויקט מקומי, פתחו בו את תיקיית הפרויקט.
+2. העתיקו את הבקשה הבאה לשיחה. לבדיקת אתר, הוסיפו בסופה את הכתובת שלו.
+3. הסוכן יבצע את ההכנה הזמינה בסביבה שלכם ויריץ את הבדיקה. ייתכן שתתבקשו לאשר התקנה או גישה לקבצים.
+
+```text
+השתמש בכלי בדיקת הנגישות של Next Impact:
+https://github.com/MatanOps/israeli-accessibility-auditor
+
+אם הכלי עדיין אינו מותקן, קרא את הוראות הריפו והתקן אותו
+בסביבה המתאימה לסוכן שבו אני משתמש.
+קרא את SKILL.md, טפל בהכנת סביבת Python נפרדת ובהתקנת
+requirements.txt, ואז בדוק את הפרויקט הפתוח או את כתובת האתר שצירפתי.
+אם חסר רכיב שאינך יכול להתקין, הסבר לי בעברית מה חסר ומה הצעד הבא.
+
+בצע בדיקה בלבד, ללא שינוי בקוד האתר.
+בסיום הצג בעברית את הבעיות העיקריות לפי דחיפות, מה מומלץ לתקן,
+ומה לא נבדק. תן לי קישורים לדוחות שנוצרו.
+```
+
+הבקשה מיועדת לסוכן קוד שמסוגל להתקין כלים ולהריץ פקודות. היא אינה מתקין עצמאי; הצלחת ההכנה תלויה בכלים ובהרשאות שכבר זמינים במחשב.
+
+**כבר התקנתם?** כתבו לסוכן:
+
+> השתמש ב־israeli-accessibility-auditor לבדיקת האתר שלי בכתובת שצירפתי. בצע בדיקה בלבד והסבר את התוצאות בעברית.
+
+## מה מקבלים?
+
+- דוח קריא עם הבעיה, המיקום שלה, הסבר והמלצה לתיקון.
+- חלוקה לנושאים: תמונות, טפסים, כותרות, קישורים, מבנה העמוד, ARIA, ניגודיות, עברית ו־RTL ועוד.
+- הבחנה בין ממצא שנבדק אוטומטית, חשד שדורש אימות ובדיקה שעדיין צריך לבצע ידנית.
+- שני קבצים: `accessibility-report.md` לקריאה ו־`accessibility-report.json` לעיבוד נוסף. סיכום הסוכן יהיה בעברית לפי הבקשה; דוחות ה־CLI עצמם באנגלית.
+
+בדיקה ללא ממצאים אינה מעידה שהאתר נגיש במלואו. ניווט במקלדת, קוראי מסך, תוכן דינמי ומצבי שימוש נוספים מחייבים בדיקה משלימה. [הסבר על מגבלות ואחריות](DISCLAIMER.md).
+
+## התקנה בפקודה אחת למשתמשי סוכני קוד
+
+אם Node.js מתאים כבר מותקן, אפשר להתקין את ה־Skill מתיקיית הפרויקט:
+
+```bash
+npx skills add MatanOps/israeli-accessibility-auditor
+```
+
+לאחר מכן השתמשו בבקשה למעלה. הפקודה מתקינה את ה־Skill בלבד; סוכן הקוד עדיין צריך להכין את סביבת Python ואת התלויות. פרטי הגרסאות שנבדקו מופיעים בהוראות המורחבות.
+
+<details>
+<summary><strong>הוראות טכניות: התקנה ידנית, הרצה, מגבלות ובדיקות (English)</strong></summary>
 
 ## Install and run
 
@@ -82,10 +134,10 @@ Run the regression tests after installing the requirements:
 python -m unittest discover -s tests
 ```
 
-## התחלה מהירה
+</details>
 
-לאחר ההתקנה, הריצו `python scripts/audit.py --path "./my app"`. שני הדוחות יישמרו בתיקיית `accessibility-report`. לבדיקת אתר השתמשו ב־`--url`; נבדק ה־HTML שהשרת מחזיר בלבד, ללא הרצת JavaScript. ברירת המחדל היא בדיקה בלבד. הדוח אינו אישור נגישות או הוכחה לעמידה בחוק.
+---
 
-## Credits and license
+יוזמה קהילתית של **[Next Impact](https://nextimpact.co.il)** — AI, אוטומציה ופתרונות טכנולוגיים לעסקים.
 
-MIT. Scanner code is adapted from `alirezarezvani/claude-skills` and `skills-il/localization`. AccessLint methodology and `peleg-jpg/site-legal-kit` informed the review boundaries. Source URLs, pinned revisions, original copyright notices, and adaptation details are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[רישיון MIT](LICENSE) · [רישיונות רכיבי צד שלישי](THIRD_PARTY_NOTICES.md) · [הבהרת אחריות](DISCLAIMER.md)
