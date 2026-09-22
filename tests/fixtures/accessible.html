@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>דוגמת נגישות לבדיקה</title>
+  <style>
+    body { color: #000000; background-color: #ffffff; font-family: sans-serif; }
+    a { color: #000066; text-decoration: underline; }
+    :focus-visible { outline: 3px solid #000000; outline-offset: 3px; }
+    img { max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <a href="#content">דילוג לתוכן הראשי</a>
+  <header><p>אתר הדגמה לבדיקות בלבד</p></header>
+  <nav aria-label="ניווט ראשי"><a href="#statement">הצהרת נגישות</a></nav>
+  <main id="content">
+    <h1>דוגמת עמוד נגיש</h1>
+    <h2>תמונות</h2>
+    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Crect width='10' height='10'/%3E%3C/svg%3E" alt="ריבוע שחור לדוגמה" width="10" height="10">
+    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/%3E" alt="" width="1" height="1">
+    <h2>טופס לדוגמה</h2>
+    <form>
+      <label for="name">שם לדוגמה</label><input id="name" name="name" type="text" autocomplete="name">
+      <label><input name="choice" type="checkbox">בחירה לדוגמה</label>
+      <textarea name="comment" aria-label="הערה לדוגמה"></textarea>
+      <label for="option">אפשרות</label><select id="option" name="option"><option>אחת</option></select>
+      <input type="hidden" name="fixture" value="test">
+      <button type="button">הצגת מידע לדוגמה</button>
+    </form>
+    <h2>טבלה לדוגמה</h2>
+    <table>
+      <caption>נתוני דוגמה</caption>
+      <thead><tr><th scope="col">פריט</th><th scope="col">כמות</th></tr></thead>
+      <tbody><tr><th scope="row">פריט א</th><td>2</td></tr></tbody>
+    </table>
+    <h2 id="statement">הצהרת נגישות לדוגמה</h2>
+    <p>עמוד זה הוא קובץ בדיקה סינתטי בלבד. הוא אינו הצהרת עמידה בדרישות.</p>
+    <p>פרטים באנגלית: <bdi lang="en" dir="ltr">Example only</bdi>.</p>
+  </main>
+  <footer><p>סוף דוגמת הבדיקה</p></footer>
+</body>
+</html>

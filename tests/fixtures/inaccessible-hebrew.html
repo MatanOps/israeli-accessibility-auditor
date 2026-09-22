@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="english" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <title>דוגמה עם ליקויי נגישות מכוונים</title>
+</head>
+<body>
+  <main>
+    <h1>דוגמת בדיקה בעברית</h1>
+    <h3>דילוג מכוון בכותרות</h3>
+    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'/%3E">
+    <input id="unlabelled-input" name="unlabelled-input" type="text">
+    <div onclick="void(0)">כפתור שאינו סמנטי</div>
+    <a href="#table">לחץ כאן</a>
+    <a href="#table"></a>
+    <button type="button" aria-labl="מידע">מידע</button>
+    <table id="table"><tr><td>שם</td><td>ערך</td></tr><tr><td>פריט א</td><td>2</td></tr></table>
+    <p style="color: #cccccc; background-color: #ffffff; font-size: 16px;">טקסט עם ניגודיות נמוכה הניתנת לחישוב סטטי</p>
+  </main>
+</body>
+</html>
