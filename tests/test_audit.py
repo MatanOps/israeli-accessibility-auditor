@@ -91,7 +91,7 @@ class AcceptanceTests(unittest.TestCase):
     def audit(self, *args, output_name=None, python_flags=(), expected=None):
         output = self.root / (output_name or self.id().split(".")[-1])
         result = subprocess.run(
-            [sys.executable, *python_flags, str(CLI), *map(str, args), "--output", str(output)],
+            [sys.executable, *python_flags, str(CLI), "--static", *map(str, args), "--output", str(output)],
             cwd=str(REPO), text=True, capture_output=True, timeout=45,
             env={**os.environ, "PYTHONUTF8": "1"},
         )

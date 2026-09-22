@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 accessibility-report/
 .DS_Store
+.runtime/
+node_modules/

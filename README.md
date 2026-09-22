@@ -1,91 +1,127 @@
 # Israeli Accessibility Auditor
 
-A free, MIT-licensed command-line accessibility scanner for frontend source and fetched HTML, with Hebrew and RTL checks. It produces evidence-based Markdown and JSON reports and identifies work requiring human review.
+### כלי בדיקת נגישות מבית Next Impact
 
-**Partial technical checks, not accessibility certification or legal advice.** The Israeli baseline is SI 5568 and the applicable official Israeli sources; the recommended engineering target is WCAG 2.2 AA. These are separate references. Read [DISCLAIMER.md](DISCLAIMER.md).
+כלי חינמי בקוד פתוח לבדיקת נגישות באתרי אינטרנט ובאפליקציות Web, עם דגש על עברית ו־RTL. אפשר לבדוק כתובת בדפדפן מקומי או קובצי מקור, לקבל דוח בעברית ולבחור ממצאים להכנת בקשת תיקון לסוכן קוד.
 
-## Install and run
+**מיועד גם למשתמשי Codex ו־Claude Code שאינם מכירים פקודות התקנה.** הסוכן יכול להכין את סביבת הכלי ולהריץ את הבדיקה. הכלי אינו אישור נגישות, חוות דעת משפטית או הוכחה לעמידה בחוק. [הבהרת אחריות](DISCLAIMER.md).
 
-Requires Python 3.9+; verified on Python 3.9 and 3.12. Use a maintained Python distribution built with OpenSSL 1.1.1+ for HTTPS auditing; the older macOS system Python may emit an unsupported LibreSSL warning. Public Python dependencies are pinned in `requirements.txt`: `requests==2.32.5` and `beautifulsoup4==4.15.0`.
+## מתחילים בשלושה צעדים
 
-```bash
-git clone https://github.com/MatanOps/israeli-accessibility-auditor.git
-cd israeli-accessibility-auditor
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python scripts/audit.py --path tests/fixtures/inaccessible-hebrew.html
+1. פתחו את Codex או Claude Code עם גישה לקבצים ולטרמינל.
+2. העתיקו את הבקשה הבאה והוסיפו כתובת אתר או את תיקיית הפרויקט.
+3. הסוכן יכין סביבת עבודה נפרדת, יבצע בדיקה ויציג את הדוחות. אם חסרים Python או Node.js, הוא יציג את החסר ואת הצעד הבא.
+
+```text
+השתמש בכלי בדיקת הנגישות של Next Impact:
+https://github.com/MatanOps/israeli-accessibility-auditor
+
+קרא את SKILL.md. אתר את תיקיית הכלי והרץ את scripts/audit.py
+עם --prepare נגד האתר או הפרויקט שצירפתי. אל תשנה את קוד האתר.
+בסיום פתח את דוח ה־HTML והסבר בעברית מה נמצא, מה דורש אימות
+ומה לא נבדק. אם ההכנה נכשלת, הסבר מה חסר בלי לטעון שהבדיקה בוצעה.
 ```
 
-On Windows, activate with `.venv\Scripts\activate` instead. Once the virtual environment is active, use `python` as shown above. `scripts/audit.py` is the sole command-line entry point.
-
-The included fixture deliberately contains defects, so exit code `1` is expected. To audit your own project or a page:
-
-```bash
-python scripts/audit.py --path "./my app"
-python scripts/audit.py --url https://example.co.il --output ./accessibility-report
-```
-
-The repository also includes an agent skill for Codex and Claude Code. Install it from your project directory:
+להתקנת ה־Skill מתיקיית הפרויקט:
 
 ```bash
 npx skills add MatanOps/israeli-accessibility-auditor
 ```
 
-This exact command was verified against the public repository with `skills` 1.7.0 and Node.js 26.5.0; that installer requires Node.js 22.20+. See [SKILL.md](SKILL.md). Skill installation copies the bundled scripts and references; it does not install the Python dependencies. Create a virtual environment and install the `requirements.txt` from the installed skill directory before running its `scripts/audit.py`.
+מתקין ה־Skill וסביבת הסריקה הם רכיבים נפרדים: גרסת `skills` 1.7.0 נבדקה בפרסום הקודם עם Node.js 26.5.0 ודורשת Node.js 22.20 ומעלה. ההכנה באמצעות `--prepare` מטפלת בתלויות Python, בתלויות הדפדפן וב־Chromium; היא אינה מתקינה Python או Node.js במחשב. ההוראות ב־[SKILL.md](SKILL.md) מאפשרות לסוכן לבצע את ההכנה בלי לבקש מהמשתמש להקליד פקודות.
 
-After installing the skill, ask Codex to “Use `$israeli-accessibility-auditor` to audit this project; do not edit application code.” In Claude Code, invoke `/israeli-accessibility-auditor` with the project path or URL. The agent can add browser observations and retain a clear human-testing handoff.
+## מה מקבלים?
 
-## Reports and exit codes
+שלושה קבצים בתיקיית הפלט:
 
-Both modes write these files in the output directory (`./accessibility-report` by default):
+- `accessibility-report.html` — דוח עברי ב־RTL, עם קבוצות ממצאים ובחירת ממצאים לבקשת תיקון.
+- `accessibility-report.md` — דוח Markdown עם הראיות המקוריות.
+- `accessibility-report.json` — ממצאים ונתוני הרצה לעיבוד ולהשוואה.
 
-```text
-accessibility-report.md
-accessibility-report.json
+בדוח HTML אפשר לבחור ממצאים מאומתים או בחירה אישית, להעתיק את בקשת התיקון או להוריד אותה כ־Markdown. רק הממצאים שנבחרו נכנסים לבקשה. הפעולה אינה משנה קוד ואינה שולחת מידע לספק AI. כשיש רק כתובת אתר, הסוכן יצטרך גישה לקוד כדי לבצע תיקון ממשי.
+
+ממצאים חוזרים מוצגים בקבוצות ושומרים את המיקומים שלהם. חומרה וודאות מוצגות בנפרד: ממצא אוטומטי, חשד הדורש אימות ובדיקה ידנית אינם שקולים. אפס ממצאים אינו קביעה של נגישות מלאה.
+
+## התקנה והרצה ידנית
+
+נדרשים Python 3.9 ומעלה; לסריקה בדפדפן נדרשים גם Node.js 20 ומעלה ו־npm. השתמשו בגרסת Python מתוחזקת עם OpenSSL מתאים ל־HTTPS. בדיקות Python של הגרסה הסטטית בוצעו ב־3.9 וב־3.12; אין כאן טענה לאימות כל מערכת הפעלה או תצורת דפדפן.
+
+```bash
+git clone https://github.com/MatanOps/israeli-accessibility-auditor.git
+cd israeli-accessibility-auditor
+python3 scripts/audit.py --prepare --url https://example.com --output ./accessibility-report
 ```
 
-`--format markdown` or `--format json` selects console output; both files are still generated. Operational failures are included in reports where possible. Invalid CLI arguments or an unwritable destination can prevent report creation.
+בדיקת קוד מקומי, ללא צורך בדפדפן:
 
-| Code | Meaning |
+```bash
+python3 scripts/audit.py --prepare --path "./my app" --output ./source-report
+```
+
+בדיקת ה־HTML שמוחזר מהשרת בלבד, ללא הרצת JavaScript:
+
+```bash
+python3 scripts/audit.py --prepare --url https://example.com --static --output ./static-report
+```
+
+`audit.py` הוא ממשק ההפעלה היחיד. מודולי הסריקה וההכנה הם רכיבים פנימיים. `--format markdown` או `--format json` בוחרים את תצוגת המסוף; כל שלושת קובצי הדוח עדיין נוצרים כשהריצה יכולה לכתוב פלט. ארגומנטים לא תקינים או תיקייה שאינה ניתנת לכתיבה עלולים למנוע יצירת דוחות.
+
+### סביבת ההכנה
+
+ברירת המחדל היא `.runtime` בתוך תיקיית הכלי. נוצרת סביבת Python מבודדת; התלויות מותקנות מחדש כאשר קובץ הדרישות משתנה. תלויות Node מותקנות באמצעות `npm ci` לפי קובץ הנעילה, ו־Chromium נשמר במטמון מקומי. הרצות חוזרות משתמשות בהתקנות שכבר הושלמו. אין שינוי בתלויות של האתר, התקנת חבילות מערכת או שימוש ב־sudo.
+
+לתיקיית כלי שאינה ניתנת לכתיבה, הגדירו `A11Y_AUDITOR_CACHE` לנתיב מוחלט נגיש. למשל:
+
+```bash
+A11Y_AUDITOR_CACHE="/absolute/path/auditor-cache" python3 scripts/audit.py --prepare --url https://example.com
+```
+
+ההכנה מעבירה לתהליך הבדיקה את `NODE_PATH` ואת `PLAYWRIGHT_BROWSERS_PATH`. במערכות שחסרות בהן ספריות מערכת הדרושות לדפדפן, ההרצה עשויה להיכשל ולהציג שגיאה; הכלי אינו מתקין אותן אוטומטית. בהתקנה ראשונה נדרשת גישה למקורות ההורדה הציבוריים של החבילות והדפדפן.
+
+לניהול ידני של Python אפשר עדיין להשתמש ב־venv ובהתקנת `requirements.txt`. תלויות הדפדפן נעולות ב־`package-lock.json`; מסלול `--prepare` הוא הדרך המומלצת להכין אותן במטמון המבודד.
+
+## תוצאות, כיסוי והשוואה
+
+| קוד יציאה | משמעות |
 | --- | --- |
-| `0` | No `fail` or `warning` findings. Untested and human-review items may remain; this does not mean compliance. |
-| `1` | At least one `fail` or `warning` finding. |
-| `2` | Operational error, such as an unavailable URL, missing dependency, invalid path, no supported frontend files, or an output failure. |
+| `0` | אין ממצאי `fail` או `warning`; ייתכנו בדיקות שלא בוצעו ובדיקות ידניות. אין בכך אישור תאימות. |
+| `1` | נמצא לפחות ממצא `fail` או `warning`. זה אינו כשל התקנה. |
+| `2` | שגיאה תפעולית או כשל בביצוע הבדיקה. יש לעיין ב־`errors` ובכיסוי שתועד. |
 
-Findings include ID, category, severity, status, evidence type, WCAG reference, location, snippet, explanation, and remediation. Status is one of `fail`, `pass`, `warning`, `not-tested`, or `human-review-required`. Evidence is `automatically-verified`, `heuristic`, or `human-verification-required`; severity does not establish certainty.
+כל ממצא כולל מזהה, קטגוריה, חומרה, סטטוס, סוג ראיה, הפניה ל־WCAG כשמתאימה, מיקום, ראיה, הסבר והמלצה. `stable_id` משמש להשוואה, `rule_id` מציין את הכלל, ו־`engine` מבחין בין `static` ל־`axe`.
 
-The report organizes results into images/media; semantics/landmarks; headings; keyboard/focus; forms; links/buttons; ARIA; tables; contrast; zoom/reflow/motion; Hebrew/RTL; language; statement indicators; and human verification. Counts describe reported checks, not overall accessibility coverage.
+הסטטוסים הם `fail`, `pass`, `warning`, `not-tested` ו־`human-review-required`. סוגי הראיות הם `automatically-verified`, `heuristic` ו־`human-verification-required`. נתוני ההרצה מתעדים כתובת מקורית וסופית, זמנים, מנועים, עמודים ומצבים שנבדקו ומה נותר ללא בדיקה. מצב `completed` מעיד שהריצה המתוכננת הושלמה, לא שהאתר נגיש; בדיקת מקור או HTML סטטי מסומנת כבעלת כיסוי חלקי.
 
-## Scope and limits
-
-- `--path` scans HTML, JSX, TSX, Vue, Svelte, and CSS. Source patterns are approximate; framework expressions and rendered behavior need verification.
-- `--url` fetches one HTML page, following HTTP redirects. It does not render JavaScript or crawl the website. SPA content and runtime behavior remain untested.
-- Static contrast checks cannot establish the full rendered CSS cascade, image backgrounds, transparency, or every interaction state.
-- A statement link is an indicator, not verification of the statement's content or legal sufficiency.
-- The scanner does not modify audited files. Follow [manual-checks.md](references/manual-checks.md), including real screen-reader and user testing.
-
-No account, hosted scanner, external API, upstream checkout, or Git submodule is required. URL mode connects to the target website; source mode operates locally. Installation uses public package registries.
-
-## Examples
+להשוואה לדוח קודם:
 
 ```bash
-python scripts/audit.py --path tests/fixtures/accessible.html --output ./reports/accessible
-python scripts/audit.py --path tests/fixtures/inaccessible-hebrew.html --format json --output ./reports/inaccessible
+python3 scripts/audit.py --prepare --url https://example.com --baseline ./before/accessibility-report.json --output ./after
 ```
 
-Review the generated `accessibility-report.md` and `accessibility-report.json` in each directory. Findings on the deliberately inaccessible fixture are expected.
+היעלמות ממצא לבדה אינה הוכחה לתיקון. ההשוואה מבחינה בין תיקון שאומת, שינוי שטרם אומת, ממצא שנותר, ממצא חדש וכיסוי שלא נבדק. הסרה של רכיב או ירידה בכיסוי אינן מסומנות אוטומטית כתיקון.
 
-Run the regression tests after installing the requirements:
+## מגבלות
+
+- סריקת URL בדפדפן טוענת עמוד אחד ומריצה Playwright ו־axe-core מקומיים. אין crawler; מסכים, כניסות לחשבון ופעולות משתמש שלא בוצעו נותרים מחוץ לכיסוי. גם אחרי טעינה מוצלחת אין הבטחה שכל מצב SPA נבדק.
+- `--static` בודק HTML שהשרת מחזיר ללא JavaScript. `--path` בודק HTML, JSX, TSX, Vue, Svelte ו־CSS; ביטויים דינמיים, props ו־slots דורשים אימות.
+- חישוב ניגודיות סטטי מתייחס לזוג צבעים מפורש. cascade, ירושה, שקיפות, תמונות וגודל טקסט בפועל יכולים להשפיע על התוצאה; נשמרת דרישה לבדיקת הניגודיות המוצגת.
+- קישור להצהרת נגישות הוא סימן לאיתור, לא אימות תוכנה או התאמתה לדין.
+- ת״י 5568 והמקורות הרשמיים בישראל הם הבסיס הישראלי; WCAG 2.2 AA הוא יעד ההנדסה המומלץ. אין טענה שהם זהים. בדיקות תנועה לפי 2.3.3 הן המלצת AAA נוספת.
+- הכלי אינו משנה את האתר. נדרשות בדיקות מקלדת, קורא מסך ומשתמשים אמיתיים לפי [רשימת הבדיקות הידניות](references/manual-checks.md).
+
+אין צורך בחשבון, שירות סריקה חיצוני או API של ספק AI. קוד הכלי נמצא בריפו ותלויותיו ציבוריות. סריקת דפדפן טוענת את האתר ומשאביו דרך הרשת; בדיקת קוד מקומי פועלת מקומית לאחר ההכנה.
+
+## בדיקות ופיתוח
 
 ```bash
-python -m unittest discover -s tests
+python3 scripts/audit.py --prepare --path tests/fixtures/inaccessible-hebrew.html --output ./fixture-report
+.runtime/venv/bin/python -m unittest discover -s tests
 ```
 
-## התחלה מהירה
+ה־fixture הלקוי מכיל פגמים מכוונים ולכן קוד יציאה `1` צפוי. פקודת הבדיקות משתמשת במטמון ברירת המחדל במערכת Unix; למטמון אחר או ל־Windows השתמשו בקובץ Python של הסביבה שנוצרה. בדיקות דפדפן דורשות את ההכנה המתאימה.
 
-לאחר ההתקנה, הריצו `python scripts/audit.py --path "./my app"`. שני הדוחות יישמרו בתיקיית `accessibility-report`. לבדיקת אתר השתמשו ב־`--url`; נבדק ה־HTML שהשרת מחזיר בלבד, ללא הרצת JavaScript. ברירת המחדל היא בדיקה בלבד. הדוח אינו אישור נגישות או הוכחה לעמידה בחוק.
+## קרדיטים ורישיון
 
-## Credits and license
+MIT. קוד הסריקה הותאם מ־`alirezarezvani/claude-skills` ומ־`skills-il/localization`; מתודולוגיית AccessLint ו־`peleg-jpg/site-legal-kit` שימשו כרפרנסים. המקורות, גרסאות המקור, זכויות היוצרים והשינויים מתועדים ב־[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). רכיבי Playwright ו־axe-core שומרים על רישיונותיהם הנפרדים.
 
-MIT. Scanner code is adapted from `alirezarezvani/claude-skills` and `skills-il/localization`. AccessLint methodology and `peleg-jpg/site-legal-kit` informed the review boundaries. Source URLs, pinned revisions, original copyright notices, and adaptation details are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+יוזמה קהילתית של **[Next Impact](https://nextimpact.co.il)**.
