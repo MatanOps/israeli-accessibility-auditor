@@ -15,12 +15,13 @@ write a report, even when third-party dependencies are missing.
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import re
 from collections import OrderedDict
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # The 14 report categories, in display order. Scanners import these names.
 IMAGES = "Images and media"
@@ -146,7 +147,7 @@ def _report_location(target, mode):
     return {"file": target, "line": None}
 
 
-def _limitations(mode, files_scanned):
+def _limitations(mode, files_scanned, rendered=False):
     items = [
         "Static analysis only: JavaScript was not executed and nothing was rendered. Runtime-injected content, "
         "single-page-application routes, dialogs, menus, validation messages and authenticated states were not tested.",
@@ -158,10 +159,15 @@ def _limitations(mode, files_scanned):
         "Severity describes potential user impact and is independent of evidence type; heuristic findings need "
         "confirmation on the rendered page.",
     ]
-    if mode == "url":
+    if rendered:
+        items[0] = ("Playwright rendered one page and axe-core tested the recorded initial state. "
+                    "No keyboard journeys, authenticated states, dialogs opened by users, or screen-reader "
+                    "interactions were tested. Zero findings is not accessibility approval.")
+        items.append("The browser loaded resources required by the target page; axe-core itself was loaded locally.")
+    if mode == "url" and not rendered:
         items.append("Only the single HTTP response returned for the supplied URL (after redirects) was examined. "
                      "No crawling, form submission or additional requests were performed.")
-    else:
+    elif mode != "url":
         items.append("JSX, TSX, Vue and Svelte templates are matched with regular expressions. Dynamic attributes, "
                      "spread props, slots, parent-provided labels and custom components are not resolved; those "
                      "findings are heuristic and standalone components are not held to document-level rules.")
@@ -199,7 +205,15 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
     findings.sort(key=lambda item: (CATEGORIES.index(item["category"]),
                                     _STATUS_ORDER.get(item["status"], 9),
                                     _SEVERITY_ORDER.get(item["severity"], 9)))
+    for item in findings:
+        item.setdefault("engine", "static")
+        item.setdefault("rule_id", item["id"])
+        item.setdefault("locations", [item["location"]])
+        identity = json.dumps([item["engine"], item["rule_id"], item["location"]], sort_keys=True, ensure_ascii=False)
+        item["stable_id"] = "f-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
     _unique_ids(findings)
+    run = dict((metadata or {}).get("run") or {})
+    rendered = bool(run.get("rendered"))
 
     actionable = [item for item in findings if item["status"] in ACTIONABLE]
     severity_counts = OrderedDict((name, 0) for name in SEVERITIES)
@@ -223,19 +237,20 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
         ("human_review_required", status_counts["human-review-required"]),
         ("operational_errors", len(errors)),
         ("overall_conformance", "not determined"),
+        ("run_status", run.get("status", "partial")),
     ])
     scope = OrderedDict([
         ("target", target),
         ("mode", mode),
         ("files_scanned", files_scanned),
-        ("rendered", False),
-        ("javascript_executed", False),
+        ("rendered", rendered),
+        ("javascript_executed", rendered),
     ])
     return OrderedDict([
         ("version", VERSION),
         ("tool", "israeli-accessibility-auditor"),
         ("scope", scope),
-        ("limitations", _limitations(mode, files_scanned)),
+        ("limitations", _limitations(mode, files_scanned, rendered)),
         ("errors", errors),
         ("summary", summary),
         ("metadata", dict(metadata or {})),
@@ -245,7 +260,7 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
 
 
 DISCLAIMER = (
-    "This report is technical assistance produced by static analysis. It is not an accessibility certificate, "
+    "This report is technical assistance produced by scoped automated checks. It is not an accessibility certificate, "
     "a legal opinion, proof of compliance with Israeli law or IS 5568, or a substitute for testing with assistive "
     "technology, real users and a qualified accessibility professional. The Israeli legal baseline (IS 5568 and "
     "official sources) is distinct from the recommended engineering target, WCAG 2.2 AA."
@@ -298,7 +313,8 @@ def render_markdown(report):
     lines.append("- Target: {} (mode: {})".format(_code(scope["target"]), _text(scope["mode"])))
     lines.append("- Tool: israeli-accessibility-auditor {}".format(_text(report["version"])))
     lines.append("- Files or pages scanned: {}".format(int(scope["files_scanned"])))
-    lines.append("- JavaScript executed / page rendered: no")
+    lines.append("- JavaScript executed / page rendered: " + ("yes (recorded state only)" if scope["rendered"] else "no"))
+    lines.append("- Run status: " + _text(summary.get("run_status", "partial")))
     lines.append("- Overall conformance: not determined (this tool never certifies a site)")
     lines.append("")
     lines.append("## Scope and limitations")
@@ -367,6 +383,8 @@ def render_markdown(report):
     lines.append("")
     lines.append(_text(report["disclaimer"]))
     lines.append("")
+    if report.get("comparison"):
+        lines.extend(["", "## Before / after verification", "", _block(json.dumps(report["comparison"], ensure_ascii=False, indent=2))])
     return "\n".join(lines)
 
 
@@ -380,3 +398,6 @@ def write_reports(report, output):
         handle.write("\n")
     with open(md_path, "w", encoding="utf-8") as handle:
         handle.write(render_markdown(report))
+    from html_report import render_html
+    with open(os.path.join(output, "accessibility-report.html"), "w", encoding="utf-8") as handle:
+        handle.write(render_html(report))

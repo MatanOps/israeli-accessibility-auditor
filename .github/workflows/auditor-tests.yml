@@ -1,0 +1,103 @@
+name: Auditor acceptance
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare dependencies
+        run: |
+          python -m venv .runtime/venv
+          .runtime/venv/bin/python -m pip install -r requirements.txt
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+      - name: Run acceptance tests without skips
+        run: |
+          .runtime/venv/bin/python - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover('tests')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() and not result.skipped else 1)
+          PY
+      - name: Verify skill installation and first-run preparation
+        env:
+          AUDITOR_INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          with tempfile.TemporaryDirectory(prefix='auditor-client-') as directory:
+              client = Path(directory)
+              source = 'MatanOps/israeli-accessibility-auditor#' + os.environ['AUDITOR_INSTALL_REF']
+              subprocess.run(['npx', '-y', 'skills@1.7.0', 'add', source,
+                              '--agent', 'codex', '-y', '--copy'], cwd=client, check=True, timeout=180)
+              candidates = list(client.glob('.agents/skills/*/scripts/audit.py'))
+              if len(candidates) != 1:
+                  raise RuntimeError('Expected exactly one installed auditor: ' + str(candidates))
+              script = candidates[0]
+              for attempt in ('first-run', 'cached-run'):
+                  output = Path.cwd() / 'verification-reports' / ('installed-' + attempt)
+                  completed = subprocess.run([sys.executable, str(script), '--prepare',
+                                              '--url', 'https://nextimpact.co.il', '--timeout', '60',
+                                              '--output', str(output)], cwd=client, capture_output=True,
+                                             text=True, timeout=600)
+                  print(completed.stderr, flush=True)
+                  if completed.returncode not in (0, 1):
+                      raise RuntimeError(attempt + ' failed with exit ' + str(completed.returncode))
+                  report = json.loads((output / 'accessibility-report.json').read_text())
+                  run = report['metadata']['run']
+                  assert run['status'] == 'completed' and run['rendered'] and not report['errors']
+                  print(json.dumps({'installation': attempt, 'status': run['status'],
+                                    'http_status': run['http_status'], 'summary': report['summary']},
+                                   ensure_ascii=False), flush=True)
+          PY
+      - name: Scan two public pages and record actual results
+        run: |
+          .runtime/venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          targets = {
+              'nextimpact': 'https://nextimpact.co.il',
+              'w3c-demo': 'https://www.w3.org/WAI/demos/bad/before/home.html',
+          }
+          failed = False
+          for name, url in targets.items():
+              output = Path('verification-reports') / name
+              completed = subprocess.run([sys.executable, 'scripts/audit.py', '--url', url,
+                                          '--timeout', '60', '--output', str(output)],
+                                         capture_output=True, text=True, timeout=90)
+              report_file = output / 'accessibility-report.json'
+              if report_file.exists():
+                  report = json.loads(report_file.read_text())
+                  print(json.dumps({'target': url, 'exit_code': completed.returncode,
+                                    'summary': report['summary'],
+                                    'run': report['metadata'].get('run'),
+                                    'errors': report['errors']}, ensure_ascii=False), flush=True)
+              else:
+                  print(completed.stderr, flush=True)
+              failed |= completed.returncode not in (0, 1)
+          raise SystemExit(int(failed))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: accessibility-verification-reports
+          path: verification-reports/
+          if-no-files-found: ignore

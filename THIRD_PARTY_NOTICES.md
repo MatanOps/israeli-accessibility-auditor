@@ -1,6 +1,6 @@
 # Third-party notices
 
-This repository includes adapted MIT-licensed code. All runtime code is local to this repository or supplied by the public dependencies in `requirements.txt`; the upstream repositories are provenance references, not runtime dependencies. Upstream projects do not endorse this project.
+This repository includes adapted MIT-licensed code. All runtime code is local to this repository or supplied by the public dependencies in `requirements.txt` and `package-lock.json`; the upstream repositories are provenance references, not runtime dependencies. Upstream projects do not endorse this project.
 
 Sources and licenses were inspected before copying. The pinned revisions below identify the inspected source snapshots.
 
@@ -98,3 +98,11 @@ SOFTWARE.
 ## Standards and official guidance
 
 W3C and Israeli government materials linked from the documentation are references, not copied implementations. Their respective rights and terms apply. The project's MIT license does not relicense those external materials.
+
+## Public browser runtime dependencies
+
+Playwright 1.63.0 and playwright-core 1.63.0 are distributed under Apache-2.0. Their bundled NOTICE identifies Microsoft Corporation and code derived from Puppeteer under Apache-2.0. Source: https://github.com/microsoft/playwright. Preserve the LICENSE and NOTICE shipped with installed packages.
+
+axe-core 4.13.0 is distributed under MPL-2.0. Its source header states Copyright (c) 2015 - 2026 Deque Systems, Inc. Source: https://github.com/dequelabs/axe-core. The installed package retains its original LICENSE and source copyright notice; this project loads its bundled axe.min.js without modifying it.
+
+These dependencies are pinned in package-lock.json and installed from public packages; they are not relicensed under this project's MIT license. Downloaded Chromium binaries retain their upstream licenses and notices. No engine is loaded from a CDN during an audit.
