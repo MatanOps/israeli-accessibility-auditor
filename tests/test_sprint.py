@@ -386,6 +386,17 @@ const fs = require('fs');
     if (!(await page.locator('#packet-text').inputValue()).includes('UNIQUE_SELECTED')) throw new Error('Clipboard fallback lost selected packet');
     await boxes.first().uncheck();
     if (await page.locator('#packet-fallback').isVisible()) throw new Error('Stale fallback packet after selection changed');
+    for (const outcome of ['reject', 'resolve']) {
+      await boxes.first().check();
+      await page.evaluate(() => {navigator.clipboard.writeText = () => new Promise((resolve, reject) => {window.__finishCopy={resolve,reject};});});
+      await copy.click();
+      await page.getByRole('button', {name:'ניקוי הבחירה'}).click();
+      await page.evaluate(result => {window.__finishCopy[result](result==='reject' ? new Error('late denial') : undefined);}, outcome);
+      if (await page.locator('#packet-fallback').isVisible()) throw new Error('Late clipboard result revived stale packet');
+      if (await page.locator('#packet-text').inputValue()) throw new Error('Late clipboard result restored stale text');
+      if (await page.locator('#packet-next').isVisible()) throw new Error('Late clipboard result restored stale next step');
+      if (!(await page.locator('#packet-status').innerText()).includes('הבחירה נוקתה')) throw new Error('Late clipboard result overwrote current status');
+    }
     if (external.length) throw new Error('HTML report requested external resources: '+external.join(','));
     console.log(JSON.stringify({ok:true,ids:selected.ids}));
   } finally {await browser.close();}

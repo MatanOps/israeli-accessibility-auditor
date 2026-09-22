@@ -464,6 +464,7 @@ _UI_SCRIPT = """
   var countEl = document.getElementById('selected-count');
   var fallbackEl = document.getElementById('packet-fallback');
   var textareaEl = document.getElementById('packet-text');
+  var selectionRevision = 0;
 
   try {
     window.auditReport = JSON.parse(document.getElementById('audit-report-data').textContent);
@@ -486,6 +487,7 @@ _UI_SCRIPT = """
   }
 
   function updateCount() {
+    selectionRevision += 1;
     countEl.textContent = 'נבחרו ' + selectedIds().length + ' ממצאים';
     // A changed selection invalidates the previously displayed packet.
     fallbackEl.hidden = true;
@@ -538,11 +540,14 @@ _UI_SCRIPT = """
   document.getElementById('copy-selected').addEventListener('click', function () {
     var packet = buildPacket();
     if (!packet) { return; }
+    var copyRevision = selectionRevision;
     var done = function () {
+      if (copyRevision !== selectionRevision) { return; }
       announce('הבקשה עבור ' + packet.ids.length + ' ממצאים הועתקה. כעת הדביקו אותה בשיחה עם הסוכן.', false);
       document.getElementById('packet-next').hidden = false;
     };
     var failed = function () {
+      if (copyRevision !== selectionRevision) { return; }
       showFallback(packet.text, 'ההעתקה האוטומטית נכשלה. העתיקו ידנית מתיבת הטקסט שלמטה.');
       document.getElementById('packet-next').hidden = false;
     };

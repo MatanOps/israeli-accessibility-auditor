@@ -59,7 +59,7 @@ npx skills add MatanOps/israeli-accessibility-auditor
 
 ## התקנה והרצה ידנית
 
-נדרשים Python 3.9 ומעלה; לסריקה בדפדפן נדרשים גם Node.js 20 ומעלה ו־npm. השתמשו בגרסת Python מתוחזקת עם OpenSSL מתאים ל־HTTPS. בדיקות Python של הגרסה הסטטית בוצעו ב־3.9 וב־3.12; אין כאן טענה לאימות כל מערכת הפעלה או תצורת דפדפן.
+נדרשים Python 3.9 ומעלה; לסריקה בדפדפן נדרשים גם Node.js 20 ומעלה ו־npm. השתמשו בגרסת Python מתוחזקת עם OpenSSL מתאים ל־HTTPS. מסלול הדפדפן וההתקנה נבדק ב־macOS 15.7.7 וב־Ubuntu 24.04 ב־GitHub Actions, עם Python 3.12 ו־Node.js 22. בדיקות Python של הגרסה הסטטית בוצעו גם ב־3.9; אין כאן טענה לאימות כל מערכת הפעלה או תצורת דפדפן.
 
 ```bash
 git clone https://github.com/MatanOps/israeli-accessibility-auditor.git
