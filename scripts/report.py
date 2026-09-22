@@ -143,12 +143,12 @@ def human_checks(location):
 # ---------------------------------------------------------------------------
 
 def _report_location(target, mode):
-    if mode == "url":
+    if mode in ("url", "site"):
         return {"url": target, "selector": None}
     return {"file": target, "line": None}
 
 
-def _limitations(mode, files_scanned, rendered=False, not_performed=False):
+def _limitations(mode, files_scanned, rendered=False, not_performed=False, site=None):
     if not_performed:
         return ["The requested page was not audited. A blocked, unavailable or unready response is not a valid "
                 "accessibility result for the target. No site findings or passes are reported.",
@@ -174,10 +174,18 @@ def _limitations(mode, files_scanned, rendered=False, not_performed=False):
         items[2] = ("Rendered contrast checks cover only combinations axe-core can resolve in the recorded state. "
                     "Unresolved cases and hover, focus, validation and other states still require verification.")
         items.append("The browser loaded resources required by the target page; axe-core itself was loaded locally.")
+        if site is not None:
+            items[0] = ("Playwright rendered the successfully scanned pages listed in the site coverage record. "
+                        "axe-core tested only their recorded initial states. No keyboard journeys, authenticated "
+                        "states, user-opened dialogs or screen-reader interactions were tested.")
+    if site is not None:
+        items.append("Discovery covers only public pages reached within the recorded site scope and limits. "
+                     "Undiscovered pages, excluded URLs and unvisited interactive states remain outside this audit. "
+                     "Finishing the discovered URL queue does not establish exhaustive website coverage.")
     if mode == "url" and not rendered:
         items.append("Only the single HTTP response returned for the supplied URL (after redirects) was examined. "
                      "No crawling, form submission or additional requests were performed.")
-    elif mode != "url":
+    elif mode not in ("url", "site"):
         items.append("JSX, TSX, Vue and Svelte templates are matched with regular expressions. Dynamic attributes, "
                      "spread props, slots, parent-provided labels and custom components are not resolved; those "
                      "findings are heuristic and standalone components are not held to document-level rules.")
@@ -238,6 +246,37 @@ def grouped_counts(findings):
     return counts
 
 
+def site_coverage(report):
+    """Return recorded site coverage, or None for existing single-target reports."""
+    site = ((report.get("metadata") or {}).get("run") or {}).get("site")
+    return site if isinstance(site, dict) else None
+
+
+def site_coverage_text(site):
+    """Plain Hebrew scope summary; queue completion never asserts conformance."""
+    return "{} מתוך {} עמודים שהתגלו נבדקו".format(site.get("scanned", 0), site.get("discovered", 0))
+
+
+def site_stop_text(reason):
+    """Translate crawler stop reasons without hiding an unknown recorded reason."""
+    return {
+        "completed": "הסריקה הסתיימה עבור העמודים שהתגלו והוגדרו לבדיקה.",
+        "complete": "הסריקה הסתיימה עבור העמודים שהתגלו והוגדרו לבדיקה.",
+        "queue-exhausted": "הסריקה הסתיימה עבור העמודים שהתגלו והוגדרו לבדיקה.",
+        "max-pages": "הסריקה נעצרה לאחר שהגיעה למספר העמודים שהוגדר.",
+        "max_pages": "הסריקה נעצרה לאחר שהגיעה למספר העמודים שהוגדר.",
+        "page-limit": "הסריקה נעצרה לאחר שהגיעה למספר העמודים שהוגדר.",
+        "max-seconds": "הסריקה נעצרה לאחר שהגיעה לזמן שהוגדר.",
+        "max_seconds": "הסריקה נעצרה לאחר שהגיעה לזמן שהוגדר.",
+        "time-limit": "הסריקה נעצרה לאחר שהגיעה לזמן שהוגדר.",
+        "discovery-limit": "הסריקה נעצרה לאחר שהגיעה למגבלת גילוי הכתובות.",
+        "failed": "חלק מהעמודים לא היו זמינים לבדיקה או שהבדיקה שלהם נכשלה.",
+        "page-failures": "חלק מהעמודים לא היו זמינים לבדיקה או שהבדיקה שלהם נכשלה.",
+        "not-performed": "לא הצלחנו לבדוק עמוד באתר.",
+        "no-pages": "לא הצלחנו לבדוק עמוד באתר.",
+    }.get(str(reason), str(reason) if reason else "סיבת העצירה לא תועדה.")
+
+
 def build_report(target, mode, findings, files_scanned, errors, metadata):
     """Assemble the final report dictionary from scanner findings."""
     location = _report_location(target, mode)
@@ -259,6 +298,7 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
     findings.sort(key=lambda item: (CATEGORIES.index(item["category"]),
                                     _STATUS_ORDER.get(item["status"], 9),
                                     _SEVERITY_ORDER.get(item["severity"], 9)))
+    error_occurrences = {}
     for item in findings:
         if item.get("standards_basis") == "best-practice" and item["status"] in ACTIONABLE:
             item["status"] = "warning"
@@ -266,7 +306,12 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
         item.setdefault("engine", "static")
         item.setdefault("rule_id", item["id"])
         item.setdefault("locations", [item["location"]])
-        identity = json.dumps([item["engine"], item["rule_id"], item["location"]], sort_keys=True, ensure_ascii=False)
+        identity_parts = [item["engine"], item["rule_id"], item["location"]]
+        if item["rule_id"] == "coverage-operational-error" and item["status"] == "not-tested":
+            evidence = item["evidence"]
+            error_occurrences[evidence] = error_occurrences.get(evidence, 0) + 1
+            identity_parts.extend([evidence, error_occurrences[evidence]])
+        identity = json.dumps(identity_parts, sort_keys=True, ensure_ascii=False)
         item["stable_id"] = "f-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
     _unique_ids(findings)
     rendered = bool(run.get("rendered"))
@@ -316,7 +361,7 @@ def build_report(target, mode, findings, files_scanned, errors, metadata):
         ("version", VERSION),
         ("tool", "israeli-accessibility-auditor"),
         ("scope", scope),
-        ("limitations", _limitations(mode, files_scanned, rendered, not_performed)),
+        ("limitations", _limitations(mode, files_scanned, rendered, not_performed, run.get("site"))),
         ("errors", errors),
         ("summary", summary),
         ("metadata", dict(metadata or {})),
@@ -377,6 +422,25 @@ def render_markdown(report):
     summary = report["summary"]
     scope = report["scope"]
     lines = ["# Accessibility audit report", ""]
+    site = site_coverage(report)
+    if site is not None:
+        counts = grouped_counts(report.get("findings") or [])
+        not_performed = summary.get("run_status") == "not-performed"
+        coverage_status = ("לא בוצעה — אין תוצאות בדיקה לעמודי האתר" if not_performed else
+                           "הסתיימה לעמודים שהתגלו" if site.get("complete") else "חלקית — הכיסוי לא הושלם")
+        lines.extend(["## סיכום בדיקת האתר", "", "**" + _text(site_coverage_text(site)) + ".**", "",
+                      "מצב הבדיקה: " + coverage_status + ".",
+                      "- סוגי בעיות: {} ({} מופעים).".format(counts["problem_types"], counts["problem_occurrences"]),
+                      "- המלצות לבדיקה: {}. נושאים לבדיקה אנושית: {}. אלה אינם כשלים מאומתים.".format(
+                          counts["recommendation_types"], counts["review_types"]),
+                      "- לא נבדקו בהצלחה: {}. ממתינים לבדיקה: {}. הוחרגו: {}.".format(
+                          site.get("failed", 0), site.get("pending", 0), site.get("excluded", 0)),
+                      "- " + _text(site_stop_text(site.get("stop_reason"))),
+                      "", ("הצעד הבא: בדקו שהאתר זמין ושיש גישה מורשית לעמודים, ואז הריצו שוב." if not_performed else
+                             "הצעד הבא: העבירו את הבעיות שנמצאו למתחזק האתר, ואז הריצו בדיקה חוזרת.")])
+        if not site.get("complete") and not not_performed:
+            lines.append("יש להשלים גם את סריקת העמודים שלא נבדקו; הממצאים מהעמודים שנבדקו נשארים תקפים להיקף שנבדק.")
+        lines.extend(["הסיכום מתייחס לעמודים שהתגלו בלבד. ייתכנו עמודים נוספים שלא התגלו. זה אינו אישור נגישות לאתר.", ""])
     lines.append("- Target: {} (mode: {})".format(_code(scope["target"]), _text(scope["mode"])))
     lines.append("- Tool: israeli-accessibility-auditor {}".format(_text(report["version"])))
     lines.append("- Files or pages scanned: {}".format(int(scope["files_scanned"])))

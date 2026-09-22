@@ -51,8 +51,17 @@ _TEXTS = {
         "בדק/י מחדש לאחר התיקון ודווח/י תוצאה לכל ממצא בנפרד: תוקן, לא תוקן, לא אומת או דורש אדם.",
         "אם חסרה גישה או שהפרויקט אינו ידוע — עצר/י, בקש/י את הגישה הספציפית החסרה (מאגר קוד, מערכת ניהול או הרשאה) וציין/י צעד המשך מדויק אחד. כתובת URL לבדה אינה מאפשרת לערוך אתר.",
     ],
-    "repo_1": "- הוראות הכלי ושחזור הביקורת: https://github.com/MatanOps/israeli-accessibility-auditor — התקנה אם הכלי חסר: `npx skills add MatanOps/israeli-accessibility-auditor`.",
+    "repo_1": "- הוראות הכלי ושחזור הביקורת: https://github.com/MatanOps/israeli-accessibility-auditor — התקנה גלובלית אם הכלי חסר: `npx skills add MatanOps/israeli-accessibility-auditor --global --agent codex claude-code --yes`.",
     "repo_2": "- לאחר ההתקנה קרא/י את SKILL.md המותקן, קבע/י מדידת בסיס (baseline) עדכנית לפני כל תיקון, והשווה/י אחריו באותו יעד ובאותו היקף. אין כאן הבטחת פריסה או תיקון מאומת אוטומטי.",
+    "baseline": "- פקודת מדידת הבסיס (baseline) לשחזור הביקורת באותו יעד ובאותו היקף, מתוך תיקיית הכלי המותקן: {cmd}",
+    "cmd_url": "python3 scripts/audit.py --prepare --url {u} --output ./accessibility-report",
+    "cmd_path": "python3 scripts/audit.py --prepare --path {u} --output ./accessibility-report",
+    "cmd_site": "python3 scripts/audit.py --prepare --site {u}{p}{s} --output ./accessibility-report",
+    "cmd_pages": " --max-pages {n}",
+    "cmd_seconds": " --max-seconds {n}",
+    "url_placeholder": "<URL>",
+    "shell_unsafe": "[^A-Za-z0-9_@%+=:,./-]",
+    "shell_apostrophe": "'\"'\"'",
     "intro_1": "חבילה זו מיועדת לסוכן קוד שמבצע תיקוני נגישות, והיא כוללת אך ורק את הממצאים שנבחרו במפורש: {n} מתוך {m} ממצאים שבדוח המלא. אסור להוסיף או להרחיב ממצאים שלא נבחרו.",
     "intro_2": "החבילה אינה אישור נגישות ואינה קביעת תאימות: גם תיקון כל הממצאים שבה אינו ראיה לעמידה ב-WCAG 2.2 AA, בת״י 5568 או בדרישות הדין.",
     "h_inst": "## הוראות מחייבות לסוכן המתקן",
@@ -84,6 +93,10 @@ _TEXTS = {
     "r_pages": "- עמודים שנבדקו (pages): {v}",
     "r_states": "- מצבים שנבדקו (states): {v}",
     "r_untested": "- לא נבדקו (untested): {v}",
+    "h_site": "## בדיקת אתר",
+    "site_counts": "- עמודים שנסרקו: {s}; עמודים שהתגלו: {d}; עמודים שנכשלו: {f}; עמודים שממתינים: {p}",
+    "site_partial": "- מצב הסריקה: חלקי — כיסוי האתר לא הושלם. הממצאים שנבחרו תקפים רק לעמודים שנסרקו בפועל; עמודים שלא נסרקו לא נבדקו כלל.",
+    "site_completed": "- מצב הסריקה: הסתיים לעמודים שהתגלו במסגרת המגבלות שהוגדרו. זה אינו כיסוי מלא של האתר ואינו אישור נגישות; עמודים שלא התגלו לא נבדקו.",
     "h_ids": "## מזהי הממצאים הכלולים בחבילה",
     "unmatched": "- מזהים שנתבקשו אך לא נמצאו בדוח: {v}",
     "unmatched_note": "- מזהים אלה לא נכללו בחבילה. ודא/י שהבחירה והדוח שייכים לאותה ריצה.",
@@ -160,6 +173,9 @@ if isinstance(_CANONICAL_DISCLAIMER, str) and _HEBREW_CHARS.search(_CANONICAL_DI
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}")
 _MD_SPECIALS = re.compile(r"([\\`*_{}\[\]()#!|])")
 _BACKTICK_RUN = re.compile(r"`+")
+# shlex.quote's unsafe class, shared with the twin through _TEXTS so both
+# sides quote from one constant rather than two hand-copied patterns.
+_SHELL_UNSAFE = re.compile(_TEXTS["shell_unsafe"])
 
 
 def _fill(template, values):
@@ -187,6 +203,11 @@ def _esc_text_or_dash(value):
     return text if text != "" else _DASH
 
 
+def _neutral(value):
+    """Backticks and newlines neutralised so a value fits one inline code span."""
+    return _s(value).replace("`", "'").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+
+
 def _code(value):
     """Inline code with backticks and newlines neutralised; missing -> dash."""
     if value is None:
@@ -194,8 +215,23 @@ def _code(value):
     text = str(value)
     if text == "":
         return _DASH
-    text = text.replace("`", "'").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    return "`" + text + "`"
+    return "`" + _neutral(text) + "`"
+
+
+def _shell_quote(value):
+    """shlex.quote semantics for a value placed in a copyable command.
+
+    Neutralised first (as ``_code`` will do to the whole command anyway) so a
+    backtick can never reopen the single quotes afterwards; values made only
+    of safe characters stay bare, everything else is single-quoted with each
+    apostrophe replaced by the shared ``shell_apostrophe`` sequence.
+    """
+    text = _neutral(value)
+    if text == "":
+        return "''"
+    if _SHELL_UNSAFE.search(text) is None:
+        return text
+    return "'" + text.replace("'", _TEXTS["shell_apostrophe"]) + "'"
 
 
 def _fence_block(content, info):
@@ -286,6 +322,60 @@ def _attempts_value(value):
     if value is None or isinstance(value, dict):
         return _DASH
     return _code(value)
+
+
+_MAX_SAFE_COUNT = 9007199254740991  # Number.MAX_SAFE_INTEGER: larger values print differently in JS
+
+
+def _count(value):
+    """Validated non-negative whole number as text, else None (never guessed).
+
+    Integral floats are accepted because ``--max-seconds`` is parsed as a float
+    and JSON round-trips ``600.0`` into a JavaScript number; the twin applies
+    the same rule so both sides print ``600`` or omit the value together.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    if value < 0 or value > _MAX_SAFE_COUNT or value != int(value):
+        return None
+    return str(int(value))
+
+
+def _count_or_dash(value):
+    text = _count(value)
+    return _DASH if text is None else text
+
+
+def _site_of(run):
+    """The recorded site coverage, or None for single-target runs."""
+    if not isinstance(run, dict):
+        return None
+    site = run.get("site")
+    return site if isinstance(site, dict) else None
+
+
+def _baseline_command(scope, run, site):
+    """The audit command that reproduces this run's scope (site, page or path)."""
+    url = _s(run.get("original_url")) if isinstance(run, dict) else ""
+    if url == "":
+        url = _s(scope.get("target"))
+    if url == "":
+        url = _TEXTS["url_placeholder"]
+    url = _shell_quote(url)
+    if site is not None:
+        limits = site.get("limits") if isinstance(site.get("limits"), dict) else {}
+        pages = _count(limits.get("max_pages"))
+        seconds = _count(limits.get("max_seconds"))
+        return _fill(_TEXTS["cmd_site"], {
+            "u": url,
+            "p": _fill(_TEXTS["cmd_pages"], {"n": pages}) if pages is not None else "",
+            "s": _fill(_TEXTS["cmd_seconds"], {"n": seconds}) if seconds is not None else "",
+        })
+    if _s(scope.get("mode")) == "source":
+        return _fill(_TEXTS["cmd_path"], {"u": url})
+    return _fill(_TEXTS["cmd_url"], {"u": url})
 
 
 def _uncertainties(item):
@@ -393,6 +483,8 @@ def build_packet(report, selected_ids):
     scope = rep.get("scope") if isinstance(rep.get("scope"), dict) else {}
     metadata = rep.get("metadata") if isinstance(rep.get("metadata"), dict) else {}
     run = metadata.get("run") if isinstance(metadata.get("run"), dict) else None
+    site = _site_of(run)
+    baseline = _code(_baseline_command(scope, run, site))
 
     T = _TEXTS
     lines = []
@@ -406,6 +498,7 @@ def build_packet(report, selected_ids):
     add("")
     add(T["repo_1"])
     add(T["repo_2"])
+    add(_fill(T["baseline"], {"cmd": baseline}))
     add("")
     add(_fill(T["intro_1"], {"n": n, "m": m}))
     add(T["intro_2"])
@@ -441,6 +534,18 @@ def build_packet(report, selected_ids):
         add(_fill(T["r_untested"], {"v": _id_list(run.get("untested"))}))
     else:
         add(T["run_missing"])
+    if site is not None:
+        add("")
+        add(T["h_site"])
+        add("")
+        add(_fill(T["site_counts"], {"s": _count_or_dash(site.get("scanned")),
+                                     "d": _count_or_dash(site.get("discovered")),
+                                     "f": _count_or_dash(site.get("failed")),
+                                     "p": _count_or_dash(site.get("pending"))}))
+        # "Completed" wording needs both the run status and the crawler flag;
+        # the site.complete boolean alone never upgrades a partial run.
+        complete = bool(run) and run.get("status") == "completed" and site.get("complete") is True
+        add(T["site_completed"] if complete else T["site_partial"])
     add("")
     add(T["h_ids"])
     add("")
@@ -539,12 +644,21 @@ _JS_TEMPLATE = r"""(function () {
     var text = escText(value);
     return text !== "" ? text : DASH;
   }
+  function neutral(value) {
+    return asString(value).replace(/`/g, "'").replace(/\r\n/g, " ").replace(/\r/g, " ").replace(/\n/g, " ");
+  }
   function code(value) {
     if (value === null || value === undefined) { return DASH; }
     var text = String(value);
     if (text === "") { return DASH; }
-    text = text.replace(/`/g, "'").replace(/\r\n/g, " ").replace(/\r/g, " ").replace(/\n/g, " ");
-    return "`" + text + "`";
+    return "`" + neutral(text) + "`";
+  }
+  var SHELL_UNSAFE = new RegExp(T.shell_unsafe);
+  function shellQuote(value) {
+    var text = neutral(value);
+    if (text === "") { return "''"; }
+    if (!SHELL_UNSAFE.test(text)) { return text; }
+    return "'" + text.split("'").join(T.shell_apostrophe) + "'";
   }
   function repeatChar(ch, count) {
     var out = "";
@@ -637,6 +751,38 @@ _JS_TEMPLATE = r"""(function () {
     if (value === null || value === undefined) { return DASH; }
     if (typeof value === "object") { return DASH; }
     return code(value);
+  }
+  var MAX_SAFE_COUNT = 9007199254740991;
+  function count(value) {
+    if (typeof value !== "number" || !isFinite(value)) { return null; }
+    if (value < 0 || value > MAX_SAFE_COUNT || Math.floor(value) !== value) { return null; }
+    return String(value);
+  }
+  function countOrDash(value) {
+    var text = count(value);
+    return text === null ? DASH : text;
+  }
+  function siteOf(run) {
+    if (!isObject(run)) { return null; }
+    return isObject(run.site) ? run.site : null;
+  }
+  function baselineCommand(scope, run, site) {
+    var url = isObject(run) ? asString(run.original_url) : "";
+    if (url === "") { url = asString(scope.target); }
+    if (url === "") { url = T.url_placeholder; }
+    url = shellQuote(url);
+    if (site !== null) {
+      var limits = isObject(site.limits) ? site.limits : {};
+      var pages = count(limits.max_pages);
+      var seconds = count(limits.max_seconds);
+      return fill(T.cmd_site, {
+        u: url,
+        p: pages !== null ? fill(T.cmd_pages, { n: pages }) : "",
+        s: seconds !== null ? fill(T.cmd_seconds, { n: seconds }) : ""
+      });
+    }
+    if (asString(scope.mode) === "source") { return fill(T.cmd_path, { u: url }); }
+    return fill(T.cmd_url, { u: url });
   }
   function uncertainties(item) {
     var evidenceType = asString(item.evidence_type);
@@ -733,6 +879,8 @@ _JS_TEMPLATE = r"""(function () {
     var scope = isObject(rep.scope) ? rep.scope : {};
     var metadata = isObject(rep.metadata) ? rep.metadata : {};
     var run = isObject(metadata.run) && Object.keys(metadata.run).length > 0 ? metadata.run : null;
+    var site = siteOf(run);
+    var baseline = code(baselineCommand(scope, run, site));
 
     var lines = [];
     function add(line) { lines.push(line); }
@@ -746,6 +894,7 @@ _JS_TEMPLATE = r"""(function () {
     add("");
     add(T.repo_1);
     add(T.repo_2);
+    add(fill(T.baseline, { cmd: baseline }));
     add("");
     add(fill(T.intro_1, { n: n, m: m }));
     add(T.intro_2);
@@ -778,6 +927,15 @@ _JS_TEMPLATE = r"""(function () {
       add(fill(T.r_untested, { v: idList(run.untested) }));
     } else {
       add(T.run_missing);
+    }
+    if (site !== null) {
+      add("");
+      add(T.h_site);
+      add("");
+      add(fill(T.site_counts, { s: countOrDash(site.scanned), d: countOrDash(site.discovered),
+                                f: countOrDash(site.failed), p: countOrDash(site.pending) }));
+      var complete = !!run && run.status === "completed" && site.complete === true;
+      add(complete ? T.site_completed : T.site_partial);
     }
     add("");
     add(T.h_ids);

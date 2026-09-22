@@ -16,7 +16,7 @@ from __future__ import annotations
 import html
 import json
 from collections import OrderedDict
-from report import DISCLAIMER, grouped_counts
+from report import DISCLAIMER, grouped_counts, site_coverage, site_stop_text
 
 try:
     from repair_packet import browser_script
@@ -218,6 +218,11 @@ def _rule_card_html(rule_key, items, group):
     remediation = str(first.get("remediation") or "")
     count_note = ' <span class="count">{}</span>'.format(
         "מופע אחד" if len(items) == 1 else "{} מופעים".format(len(items)))
+    urls = {str(location["url"]) for item in items for location in _locations(item) if location.get("url")}
+    if urls:
+        count_note = ' <span class="count">{} · {}</span>'.format(
+            "מופע אחד" if len(items) == 1 else "{} מופעים".format(len(items)),
+            "עמוד אחד" if len(urls) == 1 else "{} עמודים".format(len(urls)))
     lines = ['<article class="rule rule-{}">'.format(_esc(group))]
     from hebrew import finding_copy
     copy = finding_copy(first)
@@ -245,7 +250,8 @@ def _rule_card_html(rule_key, items, group):
 def _group_section_html(section_id, heading, description, grouped, group, empty_text):
     lines = ['<section id="group-{}" aria-labelledby="{}-h">'.format(_esc(section_id), section_id)]
     lines.append('<h2 id="{}-h">{}</h2>'.format(section_id, _esc(heading)))
-    lines.append('<p class="section-note">{}</p>'.format(_esc(description)))
+    if description:
+        lines.append('<p class="section-note">{}</p>'.format(_esc(description)))
     if not grouped:
         lines.append('<p class="empty">{}</p>'.format(_esc(empty_text)))
     for rule_key, items in grouped.items():
@@ -307,7 +313,10 @@ def _run_metadata_html(report):
 def _summary_html(report):
     run = (report.get("metadata") or {}).get("run") or {}
     state = run.get("status", "partial")
+    site = site_coverage(report)
     if state == "not-performed":
+        if site is not None:
+            return _site_coverage_html(report)
         readiness = run.get("readiness") or {}
         reason = readiness.get("reason") if isinstance(readiness, dict) else None
         reason = reason or "; ".join(str(error) for error in report.get("errors") or []) or "העמוד לא היה זמין לבדיקה."
@@ -320,18 +329,85 @@ def _summary_html(report):
                        ("review", "נושאים לבדיקה אנושית")):
         detail = ("{} מופעים".format(counts[key + "_occurrences"]) if key != "review"
                   else "להשלמה עם בודק או מתחזק האתר")
+        if site is not None and key == "review":
+            detail = "לא תקלות שנמצאו"
         metrics.append('<div class="metric"><strong class="metric-value">{}</strong>'
                        '<span class="metric-label">{}</span><span class="metric-detail">{}</span></div>'.format(
                            counts[key + "_types"], label, detail))
     note = ("הבדיקה הושלמה לעמוד ולמצב המתועדים בלבד."
             if state == "completed" else "הבדיקה חלקית — פרטי הכיסוי מופיעים בהמשך.")
+    if site is not None:
+        note = "הממצאים מתייחסים רק לעמודים ולמצבים שנבדקו."
     errors = report.get("errors") or []
     if errors:
         note += " חלק מהבדיקות נתקלו בתקלה; ראו פרטי הסריקה."
-    return ('<section aria-labelledby="summary-h"><h2 id="summary-h" class="sr-only">סיכום הבדיקה</h2>'
+    if site is not None:
+        return _site_coverage_html(report) + ('<section aria-labelledby="summary-h">'
+            '<h2 id="summary-h" class="sr-only">סיכום הבדיקה</h2><div class="metrics">{}</div></section>').format("".join(metrics))
+    return _site_coverage_html(report) + ('<section aria-labelledby="summary-h"><h2 id="summary-h" class="sr-only">סיכום הבדיקה</h2>'
             '<div class="metrics">{}</div><p class="section-note">{} '
             'בעיה שחוזרת בכמה מקומות מופיעה כאן פעם אחת. זה אינו אישור נגישות לאתר.</p></section>').format(
                 "".join(metrics), _esc(note))
+
+
+def _site_coverage_html(report):
+    site = site_coverage(report)
+    if site is None:
+        return ""
+    run = (report.get("metadata") or {}).get("run") or {}
+    complete = bool(site.get("complete")) and run.get("status") == "completed"
+    title = "הסריקה הסתיימה עבור העמודים שהתגלו" if complete else "הסריקה חלקית"
+    if run.get("status") == "not-performed":
+        title = "הסריקה לא בוצעה — אין תוצאות בדיקה לעמודי האתר"
+    metrics = " · ".join('<span>{}: <strong data-site-metric="{}" data-site-count="{}">{}</strong></span>'.format(
+        label, key, key, _esc(site.get(key, 0))) for key, label in (
+            ("failed", "לא נבדקו בהצלחה"), ("pending", "ממתינים"), ("excluded", "מחוץ להיקף")))
+    progress = ('<span data-site-metric="scanned" data-site-count="scanned">{}</span> מתוך '
+                '<span data-site-metric="discovered" data-site-count="discovered">{}</span> עמודים שהתגלו נבדקו').format(
+                    _esc(site.get("scanned", 0)), _esc(site.get("discovered", 0)))
+    lines = ['<section id="site-coverage" class="site-coverage" aria-labelledby="site-coverage-h">',
+             '<h2 id="site-coverage-h">{}</h2>'.format(title),
+             '<p class="coverage-progress"><strong>{}</strong></p>'.format(progress),
+             '<p class="coverage-counts">{}</p>'.format(metrics)]
+    if not complete:
+        lines.append('<p>{}</p>'.format(_esc(site_stop_text(site.get("stop_reason")))))
+        if run.get("status") == "not-performed":
+            lines.append('<p><strong>הצעד הבא:</strong> בדקו שהאתר זמין ושיש גישה מורשית לעמודים, ואז הריצו שוב.</p>')
+    lines.append('<p class="section-note">ייתכנו עמודים נוספים שלא התגלו. זה אינו אישור נגישות לאתר.</p>')
+    lines.append('<a href="#site-coverage-details">לרשימת העמודים והיקף הבדיקה</a></section>')
+    return "\n".join(lines)
+
+
+def _site_coverage_details_html(report):
+    site = site_coverage(report)
+    if site is None:
+        return ""
+    lines = ['<details id="site-coverage-details"><summary>עמודים שנבדקו ועמודים שלא נכללו</summary>']
+    limits = site.get("limits") or {}
+    if limits:
+        lines.append('<p>גבולות הסריקה: עד {} עמודים, עד {} שניות.</p>'.format(
+            _esc(limits.get("max_pages", "לא תועד")), _esc(limits.get("max_seconds", "לא תועד"))))
+    lines.append('<p>{}</p>'.format(_esc(site_stop_text(site.get("stop_reason")))))
+    statuses = {"completed": "נבדק", "scanned": "נבדק", "success": "נבדק", "partial": "נבדק חלקית",
+                "failed": "לא נבדק בהצלחה", "not-performed": "לא נבדק", "pending": "ממתין לבדיקה",
+                "excluded": "מחוץ להיקף"}
+    rows = list(site.get("page_results") or [])
+    rows.extend(dict(entry, status="excluded") for entry in site.get("excluded_urls") or [] if isinstance(entry, dict))
+    rows.extend({"url": entry, "status": "pending"} for entry in site.get("pending_urls") or [] if isinstance(entry, str))
+    lines.append('<ul class="coverage-pages">')
+    for entry in rows:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "לא תועד")
+        lines.append('<li><code dir="ltr">{}</code> — <strong>{}</strong>'.format(
+            _esc(entry.get("url")), _esc(statuses.get(status, status))))
+        if entry.get("final_url") and entry.get("final_url") != entry.get("url"):
+            lines.append('<p>כתובת לאחר הפניה: <code dir="ltr">{}</code></p>'.format(_esc(entry["final_url"])))
+        if entry.get("reason"):
+            lines.append('<p dir="auto">סיבה: {}</p>'.format(_esc(entry["reason"])))
+        lines.append('</li>')
+    lines.append('</ul></details>')
+    return "\n".join(lines)
 
 
 def _limitations_html(report):
@@ -365,10 +441,10 @@ def _comparison_html(report):
         '<li>{}: {}</li>'.format(label, len(comparison.get(key, []))) for key,label in labels.items()) + '</ul><p>היעלמות רכיב או ירידה בכיסוי אינן הוכחה לתיקון. פרטי האימות נשמרים גם ב־JSON.</p></section>'
 
 
-def _toolbar_html(not_performed=False):
+def _toolbar_html(not_performed=False, site_mode=False):
     if not_performed:
         return '<section><h2>מה עושים עכשיו?</h2><p>העמוד המבוקש לא נבדק. אין ממצאי אתר תקפים לבחירה ואין חבילת תיקון. הסדירו גישה מורשית לעמוד או בדקו עותק מקומי, ואז הריצו שוב.</p></section>'
-    return """<section class="actions" aria-labelledby="actions-h">
+    content = """<section class="actions" aria-labelledby="actions-h">
 <h2 id="actions-h">מה עושים עכשיו?</h2>
 <p>לחצו על בקשת תיקון ליד בעיה, והעתיקו אותה לסוכן בפרויקט האתר או שלחו למי שמתחזק אותו.</p>
 <button type="button" id="select-verified">הכנת בקשה לכל הבעיות המאומתות</button>
@@ -390,6 +466,10 @@ def _toolbar_html(not_performed=False):
 <button type="button" id="download-packet-preview">הורדת הבקשה כקובץ</button>
 </div></div>
 </section>"""
+    if site_mode:
+        content = content.replace("לחצו על בקשת תיקון ליד בעיה, והעתיקו אותה לסוכן בפרויקט האתר או שלחו למי שמתחזק אותו.",
+                                  "שלחו בקשת תיקון למתחזק האתר, ואז הריצו בדיקה חוזרת.")
+    return content
 
 
 
@@ -404,6 +484,25 @@ header.page { padding-block-start: 2.5rem; border-block-start: 6px solid var(--g
 h1 { font-size: clamp(1.4rem, 4vw, 2rem); line-height: 1.3; margin: 0; text-align: right; }
 .subtitle { margin: .3rem 0 1rem; font-size: 1.25rem; }
 .scope { margin-block: .5rem 1rem; overflow-wrap: anywhere; }
+.site-coverage { background: #FFFFFF; border-inline-start: 5px solid var(--gold); padding: 1.2rem; border-radius: .6rem; }
+.site-coverage a { color: var(--ink); text-underline-offset: .2em; }
+.coverage-progress { font-size: 1.2rem; }
+.coverage-counts { display: flex; flex-wrap: wrap; gap: .2rem; }
+.coverage-pages li { overflow-wrap: anywhere; padding-block: .5rem; }
+.coverage-pages li > code { display: block; text-align: left; }
+.site-report header.page { padding-block: 1.25rem .5rem; }
+.site-report .scope { margin-block: .25rem .75rem; }
+.site-report .site-coverage { padding: .85rem 1rem; }
+.site-report .site-coverage h2 { font-size: 1.05rem; margin: 0; }
+.site-report .site-coverage p { margin-block: .25rem; }
+.site-report .coverage-counts { font-size: .85rem; }
+.site-report .metrics { margin-block: .75rem .5rem; }
+.site-report .metric { padding: .6rem .75rem; }
+.site-report .metric:first-child { padding-block-start: calc(.6rem - 4px); }
+.site-report .metric-detail { font-size: .85rem; }
+.site-report main > section, .site-report main > details { padding: 1rem; }
+.site-report .actions > p { margin-block: .25rem .5rem; }
+.site-report .rule { padding-block: 1rem; }
 h2 { font-size: 1.3rem; line-height: 1.5; margin: 0 0 .5rem; }
 h3 { font-size: 1.15rem; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
 p { margin-block: .5rem .9rem; }
@@ -651,6 +750,21 @@ _UI_SCRIPT = """
 """
 
 
+_COVERAGE_SCRIPT = """
+(function () {
+  var link = document.querySelector('#site-coverage a[href="#site-coverage-details"]');
+  var details = document.getElementById('site-coverage-details');
+  if (!link || !details) { return; }
+  link.addEventListener('click', function (event) {
+    event.preventDefault();
+    details.open = true;
+    details.querySelector('summary').focus();
+    details.scrollIntoView({ block: 'start' });
+  });
+})();
+"""
+
+
 def _repair_pack_js():
     """The raw JS from repair_packet.browser_script(), or a safe placeholder."""
     if browser_script is None:
@@ -720,18 +834,20 @@ def render_html(report):
     human += section(GROUP_REVIEW, "נושאים לבדיקה בעמוד", "נדרשת בדיקה של אדם כדי לקבוע אם קיימת בעיה.")
     human += section(GROUP_HUMAN, "בדיקות נוספות להשלמה", "בדיקות כמו תפעול במקלדת והאזנה בקורא מסך. זו אינה רשימת תקלות שנמצאו.")
     sections = [
-        _toolbar_html(not_performed),
-        section(GROUP_VERIFIED, "הבעיות שכדאי לתקן קודם", "כל כרטיס מרכז סוג אחד של בעיה שנמצאה בבדיקה האוטומטית."),
+        _toolbar_html(not_performed, site_coverage(report) is not None),
+        section(GROUP_VERIFIED, "הבעיות שכדאי לתקן קודם", "" if site_coverage(report) is not None else
+                "כל כרטיס מרכז סוג אחד של בעיה שנמצאה בבדיקה האוטומטית."),
         section(GROUP_HEURISTIC, "בעיות שדורשות אימות לפני תיקון", "הבדיקה זיהתה חשד לבעיה. בקשת התיקון תנחה לאמת אותו תחילה.", suspected_failures, "suspected-failures"),
         fold("recommendations", "המלצות לבדיקה ({})".format(counts["recommendation_types"]), recommendations or '<p>לא נמצאו המלצות נוספות.</p>'),
         fold("human-review", "נושאים לבדיקה אנושית ({})".format(counts["review_types"]), human or '<p>לא נרשמו נושאים נוספים.</p>'),
         _pass_section_html(groups[GROUP_PASS]),
         _comparison_html(report),
+        _site_coverage_details_html(report),
         fold("scan-details", "פרטי הסריקה והמגבלות", _run_metadata_html(report) +
              section(GROUP_UNTESTED, "בדיקות שלא בוצעו", "יש להשלים אותן לפני הסקת מסקנות.") + _limitations_html(report)),
     ]
     if not_performed:
-        sections = [_toolbar_html(True), _limitations_html(report)]
+        sections = [_toolbar_html(True), _site_coverage_details_html(report), _limitations_html(report)]
 
     disclaimer = DISCLAIMER
     version = report.get("version") or ""
@@ -744,7 +860,7 @@ def render_html(report):
 <title>{title}</title>
 <style>{css}</style>
 </head>
-<body>
+<body{body_class}>
 <header class="page">
 <h1 dir="ltr">{title}</h1>
 <p class="subtitle">בדיקות נגישות ותיקונים</p>
@@ -770,10 +886,12 @@ def render_html(report):
 </html>
 """.format(
         title=_esc(TITLE),
+        body_class=' class="site-report"' if site_coverage(report) is not None else '',
         css=_CSS,
         scope_intro='היקף הבדיקה: <bdi dir="ltr">{}</bdi>{}'.format(
             _esc((report.get("scope") or {}).get("target") or "לא צוין"),
-            _esc(" — העמוד המבוקש לא נבדק" if not_performed else
+            _esc("" if site_coverage(report) is not None else
+                         " — העמוד המבוקש לא נבדק" if not_performed else
                          " — העמוד והמצב המתועדים בלבד" if (report.get("scope") or {}).get("rendered") else
                          " — ניתוח סטטי של המקור בלבד")),
         summary=_summary_html(report),
@@ -783,5 +901,5 @@ def render_html(report):
         version=_esc(version),
         report_json=_json_embed(report),
         repair_pack=_repair_pack_js(),
-        ui_script="" if not_performed else _UI_SCRIPT,
+        ui_script=_COVERAGE_SCRIPT + ("" if not_performed else _UI_SCRIPT),
     )
