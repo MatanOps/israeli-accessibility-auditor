@@ -42,6 +42,15 @@ _LIST_CAP = 10  # maximum entries shown per metadata or location list
 
 _TEXTS = {
     "title": "# Next Impact — חבילת תיקון נגישות",
+    "h_action": "## בקשת פעולה לסוכן המקבל",
+    "action": [
+        "אמת/י רק את הממצאים שנבחרו בחבילה זו מול המצב הנוכחי של הפרויקט; אין להרחיב את ההיקף.",
+        "תקן/י רק ליקוי שאומת בפרויקט האמיתי שאליו יש גישה מורשית, בעריכות ממוקדות בלבד. פריט שלא הוכרע מיועד לבדיקה תחילה, ללא שינוי אוטומטי.",
+        "בדק/י מחדש לאחר התיקון ודווח/י תוצאה לכל ממצא בנפרד: תוקן, לא תוקן, לא אומת או דורש אדם.",
+        "אם חסרה גישה או שהפרויקט אינו ידוע — עצר/י, בקש/י את הגישה הספציפית החסרה (מאגר קוד, מערכת ניהול או הרשאה) וציין/י צעד המשך מדויק אחד. כתובת URL לבדה אינה מאפשרת לערוך אתר.",
+    ],
+    "repo_1": "- הוראות הכלי ושחזור הביקורת: https://github.com/MatanOps/israeli-accessibility-auditor — התקנה אם הכלי חסר: `npx skills add MatanOps/israeli-accessibility-auditor`.",
+    "repo_2": "- לאחר ההתקנה קרא/י את SKILL.md המותקן, קבע/י מדידת בסיס (baseline) עדכנית לפני כל תיקון, והשווה/י אחריו באותו יעד ובאותו היקף. אין כאן הבטחת פריסה או תיקון מאומת אוטומטי.",
     "intro_1": "חבילה זו מיועדת לסוכן קוד שמבצע תיקוני נגישות, והיא כוללת אך ורק את הממצאים שנבחרו במפורש: {n} מתוך {m} ממצאים שבדוח המלא. אסור להוסיף או להרחיב ממצאים שלא נבחרו.",
     "intro_2": "החבילה אינה אישור נגישות ואינה קביעת תאימות: גם תיקון כל הממצאים שבה אינו ראיה לעמידה ב-WCAG 2.2 AA, בת״י 5568 או בדרישות הדין.",
     "h_inst": "## הוראות מחייבות לסוכן המתקן",
@@ -369,6 +378,14 @@ def build_packet(report, selected_ids):
     lines = []
     add = lines.append
     add(T["title"])
+    add("")
+    add(T["h_action"])
+    add("")
+    for index, item in enumerate(T["action"], 1):
+        add("{}. {}".format(index, item))
+    add("")
+    add(T["repo_1"])
+    add(T["repo_2"])
     add("")
     add(_fill(T["intro_1"], {"n": n, "m": m}))
     add(T["intro_2"])
@@ -699,6 +716,15 @@ _JS_TEMPLATE = r"""(function () {
     var lines = [];
     function add(line) { lines.push(line); }
     add(T.title);
+    add("");
+    add(T.h_action);
+    add("");
+    for (var act = 0; act < T.action.length; act++) {
+      add(String(act + 1) + ". " + T.action[act]);
+    }
+    add("");
+    add(T.repo_1);
+    add(T.repo_2);
     add("");
     add(fill(T.intro_1, { n: n, m: m }));
     add(T.intro_2);

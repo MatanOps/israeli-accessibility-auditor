@@ -21,7 +21,7 @@ import os
 import re
 from collections import OrderedDict
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 # The 14 report categories, in display order. Scanners import these names.
 IMAGES = "Images and media"

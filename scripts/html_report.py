@@ -222,6 +222,10 @@ def _rule_card_html(rule_key, items, group):
     lines.append('<h3>{}{}</h3>'.format(_esc(copy['title']), count_note))
     lines.append('<p class="prose"><strong>השפעה על המשתמש:</strong> {}</p>'.format(_esc(copy['impact'])))
     lines.append('<p class="prose"><strong>מה מוצע לעשות:</strong> {}</p>'.format(_esc(copy['action'])))
+    if group not in (GROUP_PASS, GROUP_UNTESTED) and any(_identity(item) for item in items):
+        action = "הכנת בקשה לתיקון זה" if group == GROUP_VERIFIED else "הכנת בקשה לבדיקה זו"
+        lines.append('<button type="button" class="rule-packet">{}</button>'.format(action))
+        lines.append('<p class="section-note">הבקשה תכלול רק את המופעים בכרטיס הזה ותחליף בחירה קודמת.</p>')
     lines.append('<details><summary>הסבר טכני של הכלל</summary>')
     lines.append('<p><code dir="ltr">{}</code></p>'.format(_esc(rule_key)))
     if first.get("category"):
@@ -376,26 +380,30 @@ def _toolbar_html(not_performed=False):
     if not_performed:
         return '<section><h2>מה עושים עכשיו?</h2><p>העמוד המבוקש לא נבדק. אין ממצאי אתר תקפים לבחירה ואין חבילת תיקון. הסדירו גישה מורשית לעמוד או בדקו עותק מקומי, ואז הריצו שוב.</p></section>'
     return """<section aria-labelledby="actions-h">
-<h2 id="actions-h">מה עושים עכשיו?</h2>
+<h2 id="actions-h">מתקדמים מהדוח לתיקון</h2>
 <ol class="next-steps">
-<li><strong>בוחרים נושא לבדיקה או לתיקון</strong><span>פתחו את המופעים בכרטיס המתאים וסמנו מה לכלול. חשד נשלח לאימות לפני שינוי.</span></li>
-<li><strong>מעבירים לסוכן שלכם</strong><span>העתיקו את הבקשה לשיחה ב־Codex או Claude Code, או צרפו את הקובץ שהורדתם.</span></li>
-<li><strong>מקבלים תיקון ובדיקה חוזרת</strong><span>פתחו את פרויקט האתר אצל הסוכן ובקשו: ״טפל רק בממצאים שבחבילה, אמת לפני שינוי ובדוק שוב אחריו. אל תפרוס את האתר.״</span></li>
+<li><strong>מכינים בקשה</strong><span>לחצו על הכנת בקשה בכרטיס של ממצא, או בחרו כאן את כל הליקויים המאומתים.</span></li>
+<li><strong>מעתיקים לסוכן</strong><span>קראו את הבקשה שתופיע והדביקו אותה ב־Codex או Claude Code בפרויקט האתר.</span></li>
+<li><strong>מתקנים ובודקים שוב</strong><span>הבקשה מנחה את הסוכן לאמת, לתקן ולבדוק מחדש. פריט לא מוכרע נשלח לבדיקה תחילה.</span></li>
 </ol>
-<p class="handoff-note"><strong>הלחיצה מכינה הוראות בלבד.</strong> היא לא מפעילה סוכן, לא משנה קוד ולא שולחת מידע. תיקון בפועל מתחיל אצל הסוכן עם גישה לפרויקט ובקשה שלכם.</p>
-<p>באתר WordPress או Elementor דרושה גישה למערכת שבה מנוהלים התוכן והתבניות. כתובת URL לבדה אינה מאפשרת תיקון.</p>
+<p class="handoff-note">הכפתורים מכינים בקשה בלבד. לביצוע נדרשת גישה לפרויקט או למערכת הניהול של האתר, כגון WordPress/Elementor. אפשר להעביר את הבקשה גם למתחזק האתר.</p>
 <div class="toolbar" role="group" aria-label="פעולות על הממצאים שנבחרו">
 <button type="button" id="select-verified">בחירת כל הליקויים המאומתים</button>
+<button type="button" id="preview-selected">הצגת הבקשה שנבחרה</button>
 <button type="button" id="copy-selected">העתקת בקשה ל־Codex / Claude</button>
 <button type="button" id="download-selected">הורדת קובץ לצירוף לסוכן</button>
 <button type="button" id="clear-selected">ניקוי הבחירה</button>
 <span id="selected-count">נבחרו 0 ממצאים</span>
 </div>
 <p id="packet-status" role="status"></p>
-<p id="packet-next" class="handoff-note" hidden>השלב הבא: פתחו את פרויקט האתר אצל סוכן הקוד, הדביקו את הבקשה או צרפו את repair-packet.md ובקשו לבצע את ההוראות. אפשר להעביר את הקובץ גם למי שמתחזק את האתר. כתובת אתר לבדה אינה מאפשרת לערוך אותו.</p>
+<p id="packet-next" class="handoff-note" hidden><strong>הבקשה מוכנה.</strong> העתיקו אותה לשיחה ב־Codex או Claude Code בפרויקט האתר, או הורידו ושלחו את הקובץ למתחזק. היא כוללת את הממצאים שנבחרו, המיקומים, הוראות התיקון והבדיקה החוזרת.</p>
 <div id="packet-fallback" hidden>
-<label for="packet-text">חבילת התיקון (Markdown) — אם ההעתקה האוטומטית נכשלה, העתיקו מכאן ידנית:</label>
-<textarea id="packet-text" rows="12" readonly spellcheck="false" dir="auto"></textarea>
+<label for="packet-text">הבקשה לסוכן — מוכנה לקריאה ולהעתקה:</label>
+<textarea id="packet-text" rows="12" readonly spellcheck="false" dir="auto" aria-describedby="packet-next"></textarea>
+<div class="toolbar" role="group" aria-label="העברת הבקשה לסוכן">
+<button type="button" id="copy-packet-preview">העתקת הבקשה</button>
+<button type="button" id="download-packet-preview">הורדת הבקשה כקובץ</button>
+</div>
 </div>
 </section>"""
 
@@ -474,10 +482,10 @@ header.page p { overflow-wrap: anywhere; }
 main > section { border-radius: 1rem; padding: 1.5rem; }
 .rule { border-radius: .7rem; }
 .occurrence-details { margin-block-start: .75rem; }
-#select-verified, #download-selected, #clear-selected { background: #fff; color: #1d4ed8; }
-#select-verified:hover, #download-selected:hover, #clear-selected:hover { background: #eff6ff; }
+#preview-selected, #download-selected, #clear-selected { background: #fff; color: #1d4ed8; }
+#preview-selected:hover, #download-selected:hover, #clear-selected:hover { background: #eff6ff; }
 #packet-next[hidden] { display: none; }
-@media print { .toolbar, #packet-fallback, #packet-status { display: none; } }
+@media print { .toolbar, .rule-packet, #packet-fallback, #packet-status { display: none; } }
 @media (max-width: 40rem) {
   .next-steps { grid-template-columns: 1fr; }
   .toolbar { flex-direction: column; align-items: stretch; }
@@ -561,13 +569,47 @@ _UI_SCRIPT = """
     try { document.execCommand('copy'); } catch (error) { /* manual copy remains */ }
   }
 
+  function showPreview(packet, focus) {
+    fallbackEl.hidden = false;
+    textareaEl.value = packet.text;
+    document.getElementById('packet-next').hidden = false;
+    if (focus) {
+      textareaEl.focus();
+      textareaEl.setSelectionRange(0, 0);
+      textareaEl.scrollTop = 0;
+      textareaEl.scrollIntoView({ block: 'center' });
+    }
+  }
+
+  function previewSelection() {
+    var packet = buildPacket();
+    if (!packet) { return; }
+    showPreview(packet, true);
+    announce('הבקשה מוכנה עבור ' + packet.ids.length + ' ממצאים שנבחרו. אפשר לקרוא, להעתיק או להוריד אותה.', false);
+  }
+
+  document.getElementById('preview-selected').addEventListener('click', previewSelection);
+
+  document.querySelectorAll('button.rule-packet').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var card = button.closest('article.rule');
+      document.querySelectorAll('input.finding-select').forEach(function (box) {
+        box.checked = card.contains(box);
+      });
+      updateCount();
+      previewSelection();
+    });
+  });
+
   document.getElementById('select-verified').addEventListener('click', function () {
-    var boxes = document.querySelectorAll('input.finding-select[data-group="verified"]');
-    for (var i = 0; i < boxes.length; i++) { boxes[i].checked = true; }
+    var boxes = document.querySelectorAll('input.finding-select');
+    for (var i = 0; i < boxes.length; i++) { boxes[i].checked = boxes[i].dataset.group === 'verified'; }
     updateCount();
-    announce(boxes.length === 0
-      ? 'אין ליקויים מאומתים לבחירה בדוח זה.'
-      : 'נבחרו כל ' + boxes.length + ' הליקויים המאומתים.', boxes.length === 0);
+    if (selectedIds().length === 0) {
+      announce('אין ליקויים מאומתים לבחירה בדוח זה. אפשר להכין בקשה לבדיקה בכרטיסים שדורשים אימות.', false);
+      return;
+    }
+    previewSelection();
   });
 
   document.getElementById('copy-selected').addEventListener('click', function () {
@@ -576,6 +618,7 @@ _UI_SCRIPT = """
     var copyRevision = selectionRevision;
     var done = function () {
       if (copyRevision !== selectionRevision) { return; }
+      showPreview(packet, false);
       announce('הבקשה עבור ' + packet.ids.length + ' ממצאים הועתקה. כעת הדביקו אותה בשיחה עם הסוכן.', false);
       document.getElementById('packet-next').hidden = false;
     };
@@ -611,6 +654,13 @@ _UI_SCRIPT = """
     document.querySelectorAll('input.finding-select').forEach(function (box) { box.checked = false; });
     updateCount();
     announce('הבחירה נוקתה. לא בוצע שינוי באתר.', false);
+  });
+
+  document.getElementById('copy-packet-preview').addEventListener('click', function () {
+    document.getElementById('copy-selected').click();
+  });
+  document.getElementById('download-packet-preview').addEventListener('click', function () {
+    document.getElementById('download-selected').click();
   });
 
   document.addEventListener('change', function (event) {
