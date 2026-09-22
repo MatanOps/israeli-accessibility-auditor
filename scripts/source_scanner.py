@@ -29,7 +29,7 @@ import re
 import contrast_checker
 from html_scanner import VALID_ARIA_ATTRS as _VALID_ARIA, VALID_ROLES as _VALID_ROLES
 from html_scanner import closest_aria_attr as _closest_aria, scan_html
-from report import ARIA, FORMS, HEADINGS, IMAGES, KEYBOARD, LINKS, TABLES, ZOOM, finding
+from report import ARIA, CONTRAST, FORMS, HEADINGS, IMAGES, KEYBOARD, LINKS, TABLES, ZOOM, finding
 
 SUPPORTED_EXTENSIONS = {".html", ".htm", ".jsx", ".tsx", ".vue", ".svelte", ".css"}
 SKIPPED_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", ".next", ".nuxt", ".svelte-kit",
@@ -151,10 +151,17 @@ class _Attrs(object):
             if value is None:
                 value = match.group(4) if match.group(4) is not None else match.group(5)
             name = self._normalise(raw_name)
+            if raw_name in ("v-bind", "bind"):
+                self.spread = True
             if match.group(4) is not None or raw_name.startswith((":", "v-bind:", "bind:")):
                 self.dynamic.add(name)
             self.values[name] = value if value is not None else ""
         cleaned = ATTR_RE.sub(" ", attr_str)
+        # Svelte shorthand attributes bind a value even without an equals sign.
+        for match in re.finditer(r"\{\s*([A-Za-z_$][\w$]*)\s*\}", cleaned):
+            name = self._normalise(match.group(1))
+            self.values[name] = match.group(0)
+            self.dynamic.add(name)
         cleaned = EXPR_RE.sub(" ", cleaned)
         for match in BOOL_ATTR_RE.finditer(cleaned):
             name = self._normalise(match.group(1))
@@ -257,7 +264,9 @@ def scan_template(text, path, extension):
         evidence_type = "heuristic" if (attrs.spread or attrs.dynamic) else "automatically-verified"
 
         # Images -----------------------------------------------------------
-        if tag == "img":
+        explicitly_hidden = attrs.literal("aria-hidden") == "true" or (
+            attrs.has("hidden") and not attrs.is_dynamic("hidden"))
+        if tag == "img" and not explicitly_hidden:
             if not attrs.has("alt") and not attrs.spread and not attrs.has("aria-label") \
                     and not attrs.has("aria-labelledby"):
                 if attrs.dynamic:
@@ -268,9 +277,10 @@ def scan_template(text, path, extension):
                                            "at runtime (for example through inherited attributes).",
                                            'Add an explicit alt="description" or alt="" for decorative images.'))
                 else:
-                    results.append(finding("img-alt-missing", IMAGES, "critical", "fail", "automatically-verified",
+                    results.append(finding("img-alt-missing", IMAGES, "critical", "warning", "heuristic",
                                            "1.1.1 Non-text Content", location, opening,
-                                           "The img element has no alt attribute and no ARIA name in this template.",
+                                           "The img element has no alt attribute and no ARIA name in this template. "
+                                           "Ancestor visibility and the composed runtime tree are not resolved.",
                                            'Add alt="description" or alt="" for decorative images.'))
             else:
                 alt = attrs.literal("alt")
@@ -335,12 +345,18 @@ def scan_template(text, path, extension):
                                    "2.4.3 Focus Order", location, opening,
                                    'tabindex="{}" forces a custom tab order.'.format(tabindex.strip()),
                                    'Use tabindex="0" or "-1" and rely on DOM order.'))
-        if attrs.literal("aria-hidden") == "true" and (
+        negative_tabindex = attrs.get("tabindex") or ""
+        excluded_from_tab = negative_tabindex.strip() == "-1" or bool(
+            re.fullmatch(r"\{\s*-1\s*\}", negative_tabindex))
+        known_disabled = attrs.has("disabled") and (not attrs.is_dynamic("disabled") or bool(
+            re.fullmatch(r"\{\s*true\s*\}", attrs.get("disabled") or "")))
+        if attrs.literal("aria-hidden") == "true" and not excluded_from_tab and not known_disabled and (
                 tag in ("button", "select", "textarea", "input") or (tag == "a" and attrs.has("href"))):
             results.append(finding("aria-hidden-focusable", KEYBOARD, "serious", "warning", "heuristic",
                                    "4.1.2 Name, Role, Value", location, opening,
                                    'aria-hidden="true" on a natively focusable element.',
-                                   "Remove aria-hidden or make the element unfocusable."))
+                                   "Remove aria-hidden or remove the control from sequential keyboard focus; "
+                                   "review any programmatic focus separately."))
 
         # ARIA -------------------------------------------------------------
         for name in attrs.names():
@@ -461,19 +477,16 @@ def scan_template(text, path, extension):
             entry, unknown = contrast_checker.inline_style_pair(style)
             if entry:
                 results.append(contrast_checker.pair_finding(entry, location, "style attribute on <{}>".format(tag)))
+            elif unknown:
+                unknown["line"] = location["line"]
+                results.append(contrast_checker.unknown_background_finding(
+                    [unknown], location, "style attribute on <{}>".format(tag)))
         elif attrs.is_dynamic("style") and attrs.get("style"):
-            object_literal = attrs.get("style")
-            values = dict(re.findall(r"(color|backgroundColor|background|fontSize|fontWeight)\s*:\s*[\"'`]([^\"'`]+)[\"'`]",
-                                     object_literal))
-            if "color" in values and ("backgroundColor" in values or "background" in values):
-                css_like = "color:{};background-color:{};".format(values["color"], values.get("backgroundColor") or values.get("background"))
-                if "fontSize" in values:
-                    css_like += "font-size:{};".format(values["fontSize"])
-                if "fontWeight" in values:
-                    css_like += "font-weight:{};".format(values["fontWeight"])
-                entry, unknown = contrast_checker.inline_style_pair(css_like)
-                if entry:
-                    results.append(contrast_checker.pair_finding(entry, location, "style object on <{}>".format(tag)))
+            results.append(finding("contrast-dynamic-style-unresolved", CONTRAST, "info", "not-tested", "heuristic",
+                                   "1.4.3 Contrast (Minimum)", location, opening,
+                                   "This style expression was not evaluated. Object spreads, opacity, background "
+                                   "images and dynamic values can change the effective colour pair.",
+                                   "Measure the rendered foreground and background in the browser."))
 
     previous = None
     for level, offset, opening in heading_levels:

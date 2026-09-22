@@ -754,12 +754,13 @@ def check_keyboard(ctx):
             focusable = (element.name in ("button", "select", "textarea") or (element.name == "a" and _has(element, "href"))
                          or (element.name == "input" and (_attr(element, "type") or "").lower() != "hidden")
                          or (tabindex is not None and tabindex.strip() != "-1"))
-            if focusable and not _has(element, "disabled"):
+            if focusable and not _has(element, "disabled") and (tabindex or "").strip() != "-1":
                 results.append(finding("aria-hidden-focusable", KEYBOARD, "serious", "warning", "heuristic",
                                        "4.1.2 Name, Role, Value", ctx.loc(element), opening_tag(element),
                                        'aria-hidden="true" is set on an element that is focusable by default; keyboard '
                                        'users would land on an invisible control unless CSS or scripts hide it.',
-                                       "Remove aria-hidden, or make the element unfocusable (tabindex=\"-1\"/disabled)."))
+                                       "Remove aria-hidden, or remove the control from sequential keyboard focus "
+                                       "(tabindex=\"-1\"/disabled). Programmatic focus still needs runtime review."))
     return results
 
 

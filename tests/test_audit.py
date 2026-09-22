@@ -342,6 +342,65 @@ class AcceptanceTests(unittest.TestCase):
                 self.assertTrue(self.actionable(findings, "Links and buttons"),
                                 "HTML labels only supply names to labelable controls, not anchors")
 
+    def test_jsx_dynamic_style_context_prevents_verified_contrast(self):
+        cases = {
+            "jsx image style": "color:'#fff',backgroundColor:'#fff',backgroundImage:'url(hero.jpg)'",
+            "jsx opacity style": "color:'#fff',backgroundColor:'#fff',opacity:0.2",
+            "jsx spread style": "color:'#fff',backgroundColor:'#fff',...rest",
+        }
+        for name, declarations in cases.items():
+            with self.subTest(case=name):
+                source = "export function Example() { return <p style={{" + declarations + "}}>Text</p>; }"
+                project = self.project(name, source, "Example.jsx")
+                findings, _, _ = self.audit("--path", project, output_name="report " + name)
+                contrast = [f for f in findings if f["category"].rstrip(".") == "Contrast and visual presentation"]
+                self.assertTrue(contrast, "Unresolved JSX style context needs explicit contrast coverage")
+                verified = [f for f in contrast if f["evidence_type"] == "automatically-verified"
+                            and f["status"] in {"pass", "fail"}]
+                self.assertEqual(verified, [], "Images, opacity, or spreads can invalidate extracted literal pairs")
+                self.assertTrue(any(f["status"] == "not-tested" or f["evidence_type"] == "heuristic" for f in contrast))
+
+    def test_template_dynamic_image_attributes_are_not_verified_missing_alt(self):
+        cases = {
+            "svelte shorthand image": ("Example.svelte", '<img {src} {alt}/>'),
+            "vue bound image": ("Example.vue", '<template><img v-bind="imgAttrs"></template>'),
+        }
+        for name, (filename, source) in cases.items():
+            with self.subTest(case=name):
+                project = self.project(name, source, filename)
+                findings, _, _ = self.audit("--path", project, output_name="report " + name)
+                failures = [f for f in findings if f["category"].rstrip(".") == "Images and media"
+                            and f["status"] == "fail" and f["evidence_type"] == "automatically-verified"]
+                self.assertEqual(failures, [], "Dynamic shorthand or bindings may supply the image alternative")
+
+    def test_hidden_controls_removed_from_tab_order_have_no_focusability_warning(self):
+        cases = {
+            "html hidden tabindex": ("index.html", self.document('<button aria-hidden="true" tabindex="-1">x</button>')),
+            "html hidden disabled": ("index.html", self.document('<button aria-hidden="true" disabled>x</button>')),
+            "jsx hidden tabindex": ("Example.jsx", 'export function Example() { return <button aria-hidden="true" tabIndex="-1">x</button>; }'),
+            "jsx hidden disabled": ("Example.jsx", 'export function Example() { return <button aria-hidden="true" disabled>x</button>; }'),
+        }
+        for name, (filename, source) in cases.items():
+            with self.subTest(case=name):
+                project = self.project(name, source, filename)
+                findings, _, _ = self.audit("--path", project, output_name="report " + name)
+                self.assertEqual(self.actionable(findings, "Keyboard and focus"), [],
+                                 "Explicitly removed tab stops or disabled controls are not default keyboard targets")
+
+    def test_template_hidden_images_have_no_verified_missing_alt_failure(self):
+        for extension in ("jsx", "tsx", "vue", "svelte"):
+            with self.subTest(extension=extension):
+                markup = '<img aria-hidden="true" src="icon.svg"/>'
+                if extension in {"jsx", "tsx"}:
+                    markup = "export function Icon() { return " + markup + "; }"
+                elif extension == "vue":
+                    markup = "<template>" + markup + "</template>"
+                project = self.project("template hidden image " + extension, markup, "Icon." + extension)
+                findings, _, _ = self.audit("--path", project, output_name="report template hidden image " + extension)
+                failures = [f for f in findings if f["category"].rstrip(".") == "Images and media"
+                            and f["status"] == "fail" and f["evidence_type"] == "automatically-verified"]
+                self.assertEqual(failures, [], "Explicitly hidden template images are not announced as missing alternatives")
+
     def test_operational_error_does_not_inject_markdown(self):
         malicious = "missing\n\n# Injected heading\n\n![injected](https://example.invalid/image.png)\n"
         _, markdown, _ = self.audit("--path", self.root / malicious, expected=2)
