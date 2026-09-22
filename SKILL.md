@@ -8,6 +8,18 @@ license: MIT
 
 Produce a scoped technical accessibility report. Default to audit-only. Do not change application code, install overlays, publish statements, or claim compliance, certification or legal approval.
 
+## First-run setup and plain-language handoff
+
+Support users who do not know terminal commands. When asked to install or run this skill, perform the environment setup using available tools rather than handing the user a list of commands.
+
+1. Locate the complete installed skill directory, including `scripts/`, `requirements.txt` and `references/`. Use absolute paths; never resolve those resources against the application being audited.
+2. Detect an available compatible Python interpreter (Python 3.9+; prefer a maintained distribution). Reuse a dedicated virtual environment for this skill, or create one in a writable user cache/tool directory outside the audited application. Invoke the environment's Python directly: `bin/python` on Unix or `Scripts/python.exe` on Windows. Shell activation is not required.
+3. Check the pinned dependencies in `requirements.txt`. If missing or mismatched, install them using that environment's Python with `-m pip install -r` and the absolute requirements path. Reuse the environment on later runs. Do not alter the application's dependencies, system Python or global packages.
+4. If Python, venv support, network access or required permissions are unavailable, explain the actual blocker in the user's language and give one concrete next step. Do not claim setup succeeded or bypass the host's permission controls. Do not install additional browsers solely for the existing static scan.
+5. Run the existing CLI against the requested target. If a URL is supplied, do not require local source access. If neither URL nor a usable project is available, ask only for the target.
+6. Present a concise summary in the user's language (Hebrew when requested): the most important findings, recommended next actions, untested scope, and links to the generated reports. Explain exit code 1 as findings rather than an installation failure. The CLI reports are currently English; distinguish the translated summary from the original evidence.
+7. Keep all existing evidence and compliance limits. Describe the tool as a community initiative by Next Impact and use at most one unobtrusive link to https://nextimpact.co.il in the final handoff. Do not replace report findings with marketing copy.
+
 ## Workflow
 
 1. Identify the stack, pinned runtime, run commands, main routes and critical user journeys from available source. Choose a representative sample: entry page, form, navigation, and relevant dialogs, menus, validation and SPA states. Record the sample and what is excluded; the CLI does not discover or crawl routes.
