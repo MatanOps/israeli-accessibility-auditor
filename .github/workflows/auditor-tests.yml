@@ -117,6 +117,33 @@ jobs:
           })().catch(e=>{console.error(e);process.exit(1)});
           JS
           node benchmark-probe.cjs
+      - name: Compare AccessLint CLI 0.13.0 on both live pages
+        run: |
+          python - <<'PY'
+          import collections,json,pathlib,subprocess,time,urllib.request
+          out=pathlib.Path('benchmark-reports')
+          exe=subprocess.check_output(['node','-e',"console.log(require('playwright').chromium.executablePath())"],text=True).strip()
+          chrome=subprocess.Popen([exe,'--headless','--no-sandbox','--remote-debugging-port=9222','--user-data-dir=/tmp/a11y-benchmark-profile'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+          try:
+           for attempt in range(40):
+            try:
+             urllib.request.urlopen('http://127.0.0.1:9222/json/version',timeout=1).read()
+             break
+            except Exception:time.sleep(.25)
+           for name,url in [('nextimpact','https://nextimpact.co.il'),('refeel','https://refeel.co.il')]:
+            p=subprocess.run(['npx','-y','@accesslint/cli@0.13.0','scan',url,'--format','json'],capture_output=True,text=True,timeout=150)
+            (out/(name+'-accesslint.json')).write_text(p.stdout)
+            (out/(name+'-accesslint-stderr.txt')).write_text(p.stderr)
+            try:
+             data=json.loads(p.stdout)
+             print('ACCESSLINT_RESULT '+json.dumps({'name':name,'exit_code':p.returncode,'data':data},ensure_ascii=False),flush=True)
+            except Exception:
+             print('ACCESSLINT_ERROR '+json.dumps({'name':name,'exit_code':p.returncode,'stderr':p.stderr[-1500:],'stdout':p.stdout[:500]}),flush=True)
+          finally:
+           chrome.terminate()
+           chrome.wait(timeout=15)
+          
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
